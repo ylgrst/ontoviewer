@@ -54,6 +54,7 @@ Options:
 - `--max-depth`, `-d`: recursive import depth (`0` loads only the root ontology).
 - `--output`, `-o`: output HTML file path.
 - `--format`: force parser format (example: `xml`, `turtle`, `n3`, `nt`).
+- `--label-mode`: initial display mode for class/property labels (`human` or `raw`).
 
 After the command runs, open the generated HTML file in a browser.
 The CLI summary includes loaded ontologies, total ontology references, and unresolved imports.
@@ -63,6 +64,7 @@ In the graph UI:
 - Drag background to pan.
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore full detail.
+- Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 
 ## Project layout
 

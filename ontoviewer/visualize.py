@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, Set, Tuple
+from typing import Dict, Literal, Set, Tuple
 
 from pyvis.network import Network
 from rdflib import URIRef
@@ -26,7 +26,15 @@ PALETTE = [
 ]
 
 
-def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dict[str, int]:
+LabelMode = Literal["human", "raw"]
+
+
+def render_interactive_graph(
+    closure: OntologyClosure,
+    output_path: Path,
+    *,
+    label_mode: LabelMode = "human",
+) -> Dict[str, int]:
     """Render an interactive HTML graph with ontology-aware colors and clustering controls."""
     loaded_ontology_ids = list(closure.documents.keys())
     ontology_color = {iri: PALETTE[idx % len(PALETTE)] for idx, iri in enumerate(loaded_ontology_ids)}
@@ -88,7 +96,7 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
     class_owner: Dict[str, str] = {}
     class_display_labels: Dict[str, str] = {}
     property_display_labels: Dict[str, str] = {}
-    relation_edges: Set[Tuple[str, str, str, str]] = set()
+    relation_edges: Set[Tuple[str, str, str, str, str]] = set()
 
     for ont_iri, document in closure.documents.items():
         graph = document.graph
@@ -103,28 +111,39 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
 
         for s, _, o in graph.triples((None, RDFS.subClassOf, None)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
-                relation_edges.add((str(s), str(o), "subClassOf", "subclass"))
+                relation_edges.add((str(s), str(o), "subClassOf", "subClassOf", "subclass"))
 
         for prop in _extract_object_properties(graph):
             prop_iri = str(prop)
-            property_label = property_display_labels.get(prop_iri)
-            if property_label is None:
-                property_label = preferred_annotation_label(graph, prop_iri) or _short_label(prop_iri)
-                property_display_labels[prop_iri] = property_label
+            human_property_label = property_display_labels.get(prop_iri)
+            if human_property_label is None:
+                human_property_label = preferred_annotation_label(graph, prop_iri) or _short_label(prop_iri)
+                property_display_labels[prop_iri] = human_property_label
+            raw_property_label = _short_label(prop_iri)
 
             domains = [d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)]
             ranges = [r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
             for domain in domains:
                 for rng in ranges:
-                    relation_edges.add((str(domain), str(rng), property_label, "property"))
+                    relation_edges.add(
+                        (
+                            str(domain),
+                            str(rng),
+                            human_property_label,
+                            raw_property_label,
+                            "property",
+                        )
+                    )
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
         color = ontology_color.get(owner, "#9ca3af")
         group = ontology_group.get(owner, "unknown")
         short = _short_label(cls)
-        display = class_display_labels.get(cls, short)
-        title = cls if display == short else f"{display} ({short})\n{cls}"
+        human_display = class_display_labels.get(cls, short)
+        raw_display = short
+        display = human_display if label_mode == "human" else raw_display
+        title = cls if human_display == short else f"{human_display} ({short})\n{cls}"
         net.add_node(
             cls,
             label=display,
@@ -133,13 +152,26 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
             shape="dot",
             size=16,
             group=group,
+            isClassNode=True,
+            humanLabel=human_display,
+            rawLabel=raw_display,
         )
 
     rendered_relations = 0
-    for src, dst, label, edge_type in relation_edges:
+    for src, dst, human_label, raw_label, edge_type in relation_edges:
         if src in class_nodes and dst in class_nodes:
             color = "#6b7280" if edge_type == "subclass" else "#111827"
-            net.add_edge(src, dst, label=label, title=edge_type, color=color)
+            display_label = human_label if label_mode == "human" else raw_label
+            net.add_edge(
+                src,
+                dst,
+                label=display_label,
+                title=edge_type,
+                color=color,
+                edgeType=edge_type,
+                humanLabel=human_label,
+                rawLabel=raw_label,
+            )
             rendered_relations += 1
 
     for edge in closure.import_edges:
@@ -153,7 +185,7 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     net.write_html(str(output_path))
-    _inject_cluster_controls(output_path, group_label)
+    _inject_cluster_controls(output_path, group_label, initial_label_mode=label_mode)
 
     unresolved_import_targets = {
         edge.target_iri for edge in closure.import_edges if edge.target_iri not in closure.documents
@@ -210,7 +242,12 @@ def _group_id(iri: str) -> str:
     return f"g{hashlib.sha1(iri.encode('utf-8')).hexdigest()[:10]}"
 
 
-def _inject_cluster_controls(output_path: Path, group_labels: Dict[str, str]) -> None:
+def _inject_cluster_controls(
+    output_path: Path,
+    group_labels: Dict[str, str],
+    *,
+    initial_label_mode: LabelMode,
+) -> None:
     html = output_path.read_text(encoding="utf-8")
 
     controls = f"""
@@ -239,11 +276,60 @@ def _inject_cluster_controls(output_path: Path, group_labels: Dict[str, str]) ->
 <div class="ontoviewer-controls">
   <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
   <button onclick="window.ontoviewerExpandAll()">Expand all</button>
+  <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
 </div>
 <script>
 (function() {{
   const groupLabels = {json.dumps(group_labels)};
   const clusterIds = [];
+  let labelMode = {json.dumps(initial_label_mode)};
+
+  function labelModeText(mode) {{
+    return mode === "human" ? "Show raw labels" : "Show human labels";
+  }}
+
+  function applyLabelMode(mode) {{
+    labelMode = mode;
+    const nodesDs = network.body.data.nodes;
+    const edgesDs = network.body.data.edges;
+
+    const nodeUpdates = [];
+    nodesDs.forEach((node) => {{
+      if (!node.isClassNode) {{
+        return;
+      }}
+      const nextLabel = mode === "human"
+        ? (node.humanLabel || node.rawLabel || node.label)
+        : (node.rawLabel || node.humanLabel || node.label);
+      if (nextLabel !== node.label) {{
+        nodeUpdates.push({{ id: node.id, label: nextLabel }});
+      }}
+    }});
+    if (nodeUpdates.length > 0) {{
+      nodesDs.update(nodeUpdates);
+    }}
+
+    const edgeUpdates = [];
+    edgesDs.forEach((edge) => {{
+      if (edge.edgeType !== "property") {{
+        return;
+      }}
+      const nextLabel = mode === "human"
+        ? (edge.humanLabel || edge.rawLabel || edge.label)
+        : (edge.rawLabel || edge.humanLabel || edge.label);
+      if (nextLabel !== edge.label) {{
+        edgeUpdates.push({{ id: edge.id, label: nextLabel }});
+      }}
+    }});
+    if (edgeUpdates.length > 0) {{
+      edgesDs.update(edgeUpdates);
+    }}
+
+    const toggleBtn = document.getElementById("ontoviewer-label-toggle");
+    if (toggleBtn) {{
+      toggleBtn.textContent = labelModeText(mode);
+    }}
+  }}
 
   window.ontoviewerCollapseByOntology = function() {{
     Object.entries(groupLabels).forEach(([groupId, label]) => {{
@@ -278,6 +364,12 @@ def _inject_cluster_controls(output_path: Path, group_labels: Dict[str, str]) ->
       }}
     }});
   }};
+
+  window.ontoviewerToggleLabels = function() {{
+    applyLabelMode(labelMode === "human" ? "raw" : "human");
+  }};
+
+  applyLabelMode(labelMode);
 }})();
 </script>
 """

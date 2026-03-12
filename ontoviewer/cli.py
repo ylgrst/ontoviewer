@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import typer
 
@@ -32,10 +32,15 @@ def render(
         "--format",
         help="Optional RDF format (e.g. xml, turtle, n3, nt).",
     ),
+    label_mode: Literal["human", "raw"] = typer.Option(
+        "human",
+        "--label-mode",
+        help="Default graph label mode: human-readable annotation labels or raw ontology codes.",
+    ),
 ) -> None:
     """Render an interactive graph from a local ontology file."""
     closure = load_ontology_closure(ontology_file, max_depth=max_depth, rdf_format=rdf_format)
-    stats = render_interactive_graph(closure, output)
+    stats = render_interactive_graph(closure, output, label_mode=label_mode)
 
     typer.echo(f"Graph written to: {output.resolve()}")
     typer.echo(
