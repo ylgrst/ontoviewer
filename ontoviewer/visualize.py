@@ -4,7 +4,7 @@ import hashlib
 import json
 from html import escape
 from pathlib import Path
-from typing import Dict, Literal, Set, Tuple
+from typing import Dict, Literal, Optional, Set, Tuple
 
 from pyvis.network import Network
 from rdflib import URIRef
@@ -122,7 +122,6 @@ def render_interactive_graph(
             font={"color": "#111827" if is_loaded else "#6b7280"},
             hidden=True,
             physics=False,
-            group=ontology_group.get(iri, "unknown"),
             ontologyGroup=ontology_group.get(iri, "unknown"),
             ontologyIri=iri,
             isOntologyNode=True,
@@ -137,13 +136,23 @@ def render_interactive_graph(
     for ont_iri, document in closure.documents.items():
         graph = document.graph
 
-        for cls_iri in _extract_classes(graph):
+        for cls_iri in _extract_declared_classes(graph):
             class_nodes.add(cls_iri)
             class_owner.setdefault(cls_iri, ont_iri)
             if cls_iri not in class_display_labels:
                 readable = preferred_annotation_label(graph, cls_iri)
                 if readable:
                     class_display_labels[cls_iri] = readable
+        class_nodes.update(_extract_referenced_classes(graph))
+
+    for cls in class_nodes:
+        if cls not in class_owner:
+            inferred_owner = _infer_owner_from_iri(cls, loaded_ontology_ids)
+            if inferred_owner:
+                class_owner[cls] = inferred_owner
+
+    for ont_iri, document in closure.documents.items():
+        graph = document.graph
 
         for s, _, o in graph.triples((None, RDFS.subClassOf, None)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
@@ -174,7 +183,7 @@ def render_interactive_graph(
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
         color = ontology_color.get(owner, "#9ca3af")
-        group = ontology_group.get(owner, "unknown")
+        ontology_group_id = ontology_group.get(owner, "unknown")
         short = _short_label(cls)
         human_display = class_display_labels.get(cls, short)
         raw_display = short
@@ -187,13 +196,23 @@ def render_interactive_graph(
             color=color,
             shape="dot",
             size=16,
-            group=group,
             isClassNode=True,
             humanLabel=human_display,
             rawLabel=raw_display,
-            ontologyGroup=group,
+            ontologyGroup=ontology_group_id,
             ontologyIri=owner,
         )
+        if owner:
+            net.add_edge(
+                f"ont:{owner}",
+                cls,
+                color="#94a3b8",
+                dashes=True,
+                width=1,
+                title="defined in ontology",
+                edgeType="ontology-membership",
+                hidden=True,
+            )
 
     rendered_relations = 0
     for src, dst, human_label, raw_label, edge_type in relation_edges:
@@ -231,6 +250,7 @@ def render_interactive_graph(
             dashes=True,
             width=2.4,
             edgeType="imports",
+            hidden=True,
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,7 +278,7 @@ def render_interactive_graph(
     }
 
 
-def _extract_classes(graph) -> Set[str]:
+def _extract_declared_classes(graph) -> Set[str]:
     classes: Set[str] = set()
     for cls in graph.subjects(RDF.type, OWL.Class):
         if isinstance(cls, URIRef):
@@ -266,6 +286,11 @@ def _extract_classes(graph) -> Set[str]:
     for cls in graph.subjects(RDF.type, RDFS.Class):
         if isinstance(cls, URIRef):
             classes.add(str(cls))
+    return classes
+
+
+def _extract_referenced_classes(graph) -> Set[str]:
+    classes: Set[str] = set()
     for obj in graph.objects(None, RDFS.domain):
         if isinstance(obj, URIRef):
             classes.add(str(obj))
@@ -297,6 +322,26 @@ def _short_label(iri: str) -> str:
 
 def _group_id(iri: str) -> str:
     return f"g{hashlib.sha1(iri.encode('utf-8')).hexdigest()[:10]}"
+
+
+def _infer_owner_from_iri(class_iri: str, ontology_ids: list[str]) -> Optional[str]:
+    best_match: Optional[str] = None
+    best_len = -1
+    for ontology_iri in ontology_ids:
+        if _iri_matches_ontology(class_iri, ontology_iri) and len(ontology_iri) > best_len:
+            best_match = ontology_iri
+            best_len = len(ontology_iri)
+    return best_match
+
+
+def _iri_matches_ontology(entity_iri: str, ontology_iri: str) -> bool:
+    if entity_iri == ontology_iri:
+        return True
+    normalized = ontology_iri.rstrip("/#")
+    for prefix in (ontology_iri, normalized):
+        if entity_iri.startswith(prefix + "#") or entity_iri.startswith(prefix + "/"):
+            return True
+    return False
 
 
 def _inject_cluster_controls(
@@ -331,23 +376,35 @@ def _inject_cluster_controls(
 
     controls = f"""
 <style>
+html, body {{
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}}
+#mynetwork {{
+  width: calc(100vw - 360px) !important;
+  height: 100vh !important;
+}}
 .ontoviewer-controls {{
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 999;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  width: 360px;
+  background: rgba(255, 255, 255, 0.97);
+  border-left: 1px solid #d1d5db;
+  border-radius: 0;
+  padding: 10px;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
   font-family: sans-serif;
-  max-width: 420px;
-  max-height: calc(100vh - 24px);
   overflow: auto;
 }}
 .ontoviewer-controls button {{
   margin-right: 6px;
+  margin-bottom: 6px;
   padding: 6px 10px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
@@ -426,8 +483,26 @@ def _inject_cluster_controls(
   font-size: 12px;
   color: #6b7280;
 }}
+@media (max-width: 1100px) {{
+  #mynetwork {{
+    width: 100vw !important;
+    height: calc(100vh - 260px) !important;
+  }}
+  .ontoviewer-controls {{
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 260px;
+    border-left: none;
+    border-top: 1px solid #d1d5db;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+  }}
+}}
 </style>
 <div class="ontoviewer-controls">
+  <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
   <button onclick="window.ontoviewerExpandAll()">Expand all</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
@@ -438,6 +513,7 @@ def _inject_cluster_controls(
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line" style="border-top-color:#94a3b8;border-top-style:dashed;"></span> ontology membership edge</div>
   <div class="ontoviewer-legend-hint">Click a class node to collapse its ontology cluster.</div>
   <div class="ontoviewer-legend-hint">Click a cluster node to expand it back.</div>
   <hr />
@@ -452,12 +528,14 @@ def _inject_cluster_controls(
   const groupLabels = {json.dumps(group_labels)};
   const clusterIds = new Set();
   let labelMode = {json.dumps(initial_label_mode)};
-  let autoCollapsedFromZoom = false;
-  const CLUSTER_IN_THRESHOLD = 0.36;
-  const EXPAND_OUT_THRESHOLD = 0.52;
+  let ontologyAttached = false;
 
   function labelModeText(mode) {{
     return mode === "human" ? "Show raw labels" : "Show human labels";
+  }}
+
+  function attachmentModeText(attached) {{
+    return attached ? "Detach ontology nodes" : "Attach ontology nodes";
   }}
 
   function clusterIdFromGroup(groupId) {{
@@ -471,13 +549,13 @@ def _inject_cluster_controls(
     }}
     let clusterColor = "#f3f4f6";
     network.body.data.nodes.forEach((node) => {{
-      if (node.group === groupId && node.isClassNode && node.color) {{
+      if (node.ontologyGroup === groupId && node.isClassNode && node.color) {{
         clusterColor = node.color;
       }}
     }});
     network.cluster({{
       joinCondition: function(nodeOptions) {{
-        return nodeOptions.group === groupId;
+        return nodeOptions.ontologyGroup === groupId;
       }},
       clusterNodeProperties: {{
         id: clusterId,
@@ -538,6 +616,45 @@ def _inject_cluster_controls(
     }}
   }}
 
+  function applyOntologyAttachment(attached) {{
+    ontologyAttached = attached;
+    const nodesDs = network.body.data.nodes;
+    const edgesDs = network.body.data.edges;
+
+    const nodeUpdates = [];
+    nodesDs.forEach((node) => {{
+      if (!node.isOntologyNode) {{
+        return;
+      }}
+      const nextHidden = !attached;
+      if (node.hidden !== nextHidden) {{
+        nodeUpdates.push({{ id: node.id, hidden: nextHidden }});
+      }}
+    }});
+    if (nodeUpdates.length > 0) {{
+      nodesDs.update(nodeUpdates);
+    }}
+
+    const edgeUpdates = [];
+    edgesDs.forEach((edge) => {{
+      if (edge.edgeType !== "imports" && edge.edgeType !== "ontology-membership") {{
+        return;
+      }}
+      const nextHidden = !attached;
+      if (edge.hidden !== nextHidden) {{
+        edgeUpdates.push({{ id: edge.id, hidden: nextHidden }});
+      }}
+    }});
+    if (edgeUpdates.length > 0) {{
+      edgesDs.update(edgeUpdates);
+    }}
+
+    const attachBtn = document.getElementById("ontoviewer-attach-toggle");
+    if (attachBtn) {{
+      attachBtn.textContent = attachmentModeText(attached);
+    }}
+  }}
+
   window.ontoviewerCollapseByOntology = function() {{
     Object.entries(groupLabels).forEach(([groupId, label]) => {{
       collapseGroup(groupId, label);
@@ -557,6 +674,10 @@ def _inject_cluster_controls(
     applyLabelMode(labelMode === "human" ? "raw" : "human");
   }};
 
+  window.ontoviewerToggleAttachment = function() {{
+    applyOntologyAttachment(!ontologyAttached);
+  }};
+
   network.on("click", function(params) {{
     if (!params.nodes || params.nodes.length === 0) {{
       return;
@@ -573,7 +694,7 @@ def _inject_cluster_controls(
     if (!node || !node.isClassNode) {{
       return;
     }}
-    const groupId = node.ontologyGroup || node.group;
+    const groupId = node.ontologyGroup;
     const label = groupLabels[groupId] || "Ontology";
     const clusterId = clusterIdFromGroup(groupId);
     if (network.isCluster(clusterId)) {{
@@ -584,17 +705,7 @@ def _inject_cluster_controls(
     }}
   }});
 
-  network.on("zoom", function(params) {{
-    const scale = params.scale;
-    if (scale < CLUSTER_IN_THRESHOLD && !autoCollapsedFromZoom) {{
-      window.ontoviewerCollapseByOntology();
-      autoCollapsedFromZoom = true;
-    }} else if (scale > EXPAND_OUT_THRESHOLD && autoCollapsedFromZoom) {{
-      window.ontoviewerExpandAll();
-      autoCollapsedFromZoom = false;
-    }}
-  }});
-
+  applyOntologyAttachment(false);
   applyLabelMode(labelMode);
 }})();
 </script>

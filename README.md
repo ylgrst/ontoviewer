@@ -6,7 +6,7 @@ Current MVP includes:
 - Load a local OWL/RDF ontology file.
 - Resolve `owl:imports` recursively (configurable max depth).
 - Extract classes and class-to-class relations.
-- Represent each ontology as a main node linked to its classes.
+- Optionally attach classes to ontology anchor nodes.
 - Render an interactive HTML graph with zoom/pan controls.
 - Color nodes by originating ontology.
 - Collapse/expand ontology groups interactively.
@@ -70,17 +70,18 @@ The CLI summary includes loaded ontologies, total ontology references, and unres
 In the graph UI:
 - Use mouse wheel / trackpad to zoom.
 - Drag background to pan.
+- Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 - Click a class node to collapse/expand its ontology group.
-- Zooming out auto-collapses ontology groups; zooming back in auto-expands them.
 - Use the built-in legend to understand node and edge types.
 
 Edge conventions:
 - `subClassOf`: solid blue arrow, no text label (reduced clutter).
 - `property relation`: solid dark arrow, labeled with property name.
 - `imports`: dashed orange arrow between ontology nodes.
+- `ontology membership`: dashed gray arrow from ontology node to class node (visible when ontology nodes are attached).
 
 ### Local Web UI
 
