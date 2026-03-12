@@ -11,6 +11,7 @@ Current MVP includes:
 - Collapse/expand class nodes by ontology group.
 - Show ontology import links as dashed edges labeled `imports`.
 - Keep declared import nodes visible even when they cannot be loaded.
+- Prefer human-readable labels from class/property annotations when available.
 
 ## Why this project?
 
@@ -85,6 +86,7 @@ pytest
 
 - Import loading relies on import IRIs being resolvable from your environment.
 - Remote import retrieval failures are reported as warnings; graph generation still completes with available ontologies.
+- Class/property node labels use annotation metadata (`rdfs:label`, `skos:prefLabel`, `IAO_0000111`, etc.) when present, then fall back to IRI-derived codes.
 - This baseline focuses on class-level graph exploration. More advanced filtering/layout controls will be added in next commits.
 
 ## License

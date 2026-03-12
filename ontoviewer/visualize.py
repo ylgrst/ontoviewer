@@ -9,6 +9,7 @@ from pyvis.network import Network
 from rdflib import URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
+from ontoviewer.labels import preferred_annotation_label
 from ontoviewer.model import OntologyClosure
 
 PALETTE = [
@@ -85,6 +86,8 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
 
     class_nodes: Set[str] = set()
     class_owner: Dict[str, str] = {}
+    class_display_labels: Dict[str, str] = {}
+    property_display_labels: Dict[str, str] = {}
     relation_edges: Set[Tuple[str, str, str, str]] = set()
 
     for ont_iri, document in closure.documents.items():
@@ -93,26 +96,39 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
         for cls_iri in _extract_classes(graph):
             class_nodes.add(cls_iri)
             class_owner.setdefault(cls_iri, ont_iri)
+            if cls_iri not in class_display_labels:
+                readable = preferred_annotation_label(graph, cls_iri)
+                if readable:
+                    class_display_labels[cls_iri] = readable
 
         for s, _, o in graph.triples((None, RDFS.subClassOf, None)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
                 relation_edges.add((str(s), str(o), "subClassOf", "subclass"))
 
         for prop in _extract_object_properties(graph):
+            prop_iri = str(prop)
+            property_label = property_display_labels.get(prop_iri)
+            if property_label is None:
+                property_label = preferred_annotation_label(graph, prop_iri) or _short_label(prop_iri)
+                property_display_labels[prop_iri] = property_label
+
             domains = [d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)]
             ranges = [r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
             for domain in domains:
                 for rng in ranges:
-                    relation_edges.add((str(domain), str(rng), _short_label(str(prop)), "property"))
+                    relation_edges.add((str(domain), str(rng), property_label, "property"))
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
         color = ontology_color.get(owner, "#9ca3af")
         group = ontology_group.get(owner, "unknown")
+        short = _short_label(cls)
+        display = class_display_labels.get(cls, short)
+        title = cls if display == short else f"{display} ({short})\n{cls}"
         net.add_node(
             cls,
-            label=_short_label(cls),
-            title=cls,
+            label=display,
+            title=title,
             color=color,
             shape="dot",
             size=16,
