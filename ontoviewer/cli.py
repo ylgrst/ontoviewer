@@ -41,9 +41,11 @@ def render(
     typer.echo(
         "Loaded "
         f"{stats['ontologies']} ontologies, "
+        f"{stats['ontology_refs']} ontology references, "
         f"{stats['classes']} classes, "
         f"{stats['relations']} relations, "
-        f"{stats['imports']} imports."
+        f"{stats['imports']} imports, "
+        f"{stats['unresolved_imports']} unresolved imports."
     )
     if closure.errors:
         typer.echo("Warnings:")

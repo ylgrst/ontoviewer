@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, Set, Tuple
 
 from pyvis.network import Network
 from rdflib import URIRef
@@ -27,12 +27,18 @@ PALETTE = [
 
 def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dict[str, int]:
     """Render an interactive HTML graph with ontology-aware colors and clustering controls."""
-    ontology_ids = list(closure.documents.keys())
-    ontology_color = {iri: PALETTE[idx % len(PALETTE)] for idx, iri in enumerate(ontology_ids)}
-    ontology_group = {iri: _group_id(iri) for iri in ontology_ids}
-    group_label = {
-        ontology_group[iri]: _short_label(iri) for iri in ontology_ids
-    }
+    loaded_ontology_ids = list(closure.documents.keys())
+    ontology_color = {iri: PALETTE[idx % len(PALETTE)] for idx, iri in enumerate(loaded_ontology_ids)}
+    ontology_group = {iri: _group_id(iri) for iri in loaded_ontology_ids}
+    group_label = {ontology_group[iri]: _short_label(iri) for iri in loaded_ontology_ids}
+
+    ontology_refs: Set[str] = set(loaded_ontology_ids)
+    if closure.root_iri:
+        ontology_refs.add(closure.root_iri)
+    for edge in closure.import_edges:
+        ontology_refs.add(edge.source_iri)
+        ontology_refs.add(edge.target_iri)
+    ontology_ids = sorted(ontology_refs)
 
     net = Network(height="850px", width="100%", directed=True, notebook=False, cdn_resources="in_line")
     net.set_options(
@@ -65,18 +71,21 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
     )
 
     for iri in ontology_ids:
+        is_loaded = iri in closure.documents
         net.add_node(
             f"ont:{iri}",
             label=_short_label(iri),
-            title=iri,
+            title=f"{iri}\n{'loaded' if is_loaded else 'declared import (unresolved)'}",
             shape="box",
-            color=ontology_color[iri],
+            color=ontology_color.get(iri, "#e5e7eb"),
+            borderWidth=2 if is_loaded else 1,
+            font={"color": "#111827" if is_loaded else "#6b7280"},
             group="ontology-meta",
         )
 
     class_nodes: Set[str] = set()
     class_owner: Dict[str, str] = {}
-    relation_edges: List[Tuple[str, str, str, str]] = []
+    relation_edges: Set[Tuple[str, str, str, str]] = set()
 
     for ont_iri, document in closure.documents.items():
         graph = document.graph
@@ -87,14 +96,14 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
 
         for s, _, o in graph.triples((None, RDFS.subClassOf, None)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
-                relation_edges.append((str(s), str(o), "subClassOf", "subclass"))
+                relation_edges.add((str(s), str(o), "subClassOf", "subclass"))
 
         for prop in _extract_object_properties(graph):
             domains = [d for d in graph.objects(prop, RDFS.domain) if isinstance(d, URIRef)]
             ranges = [r for r in graph.objects(prop, RDFS.range) if isinstance(r, URIRef)]
             for domain in domains:
                 for rng in ranges:
-                    relation_edges.append((str(domain), str(rng), _short_label(str(prop)), "property"))
+                    relation_edges.add((str(domain), str(rng), _short_label(str(prop)), "property"))
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
@@ -110,10 +119,12 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
             group=group,
         )
 
+    rendered_relations = 0
     for src, dst, label, edge_type in relation_edges:
         if src in class_nodes and dst in class_nodes:
             color = "#6b7280" if edge_type == "subclass" else "#111827"
             net.add_edge(src, dst, label=label, title=edge_type, color=color)
+            rendered_relations += 1
 
     for edge in closure.import_edges:
         net.add_edge(
@@ -128,11 +139,17 @@ def render_interactive_graph(closure: OntologyClosure, output_path: Path) -> Dic
     net.write_html(str(output_path))
     _inject_cluster_controls(output_path, group_label)
 
+    unresolved_import_targets = {
+        edge.target_iri for edge in closure.import_edges if edge.target_iri not in closure.documents
+    }
+
     return {
         "ontologies": len(closure.documents),
+        "ontology_refs": len(ontology_ids),
         "classes": len(class_nodes),
-        "relations": len(relation_edges),
+        "relations": rendered_relations,
         "imports": len(closure.import_edges),
+        "unresolved_imports": len(unresolved_import_targets),
     }
 
 

@@ -2,7 +2,7 @@
 
 OntoViewer is an open-source Python tool to visualize ontology classes and relationships in an interactive graph.
 
-This first commit provides a functional baseline:
+Current MVP includes:
 - Load a local OWL/RDF ontology file.
 - Resolve `owl:imports` recursively (configurable max depth).
 - Extract classes and class-to-class relations.
@@ -10,6 +10,7 @@ This first commit provides a functional baseline:
 - Color nodes by originating ontology.
 - Collapse/expand class nodes by ontology group.
 - Show ontology import links as dashed edges labeled `imports`.
+- Keep declared import nodes visible even when they cannot be loaded.
 
 ## Why this project?
 
@@ -34,6 +35,12 @@ pip install --upgrade pip
 pip install -e .
 ```
 
+For development (tests):
+
+```bash
+pip install -e ".[dev]"
+```
+
 ## Usage
 
 Render a graph:
@@ -48,6 +55,7 @@ Options:
 - `--format`: force parser format (example: `xml`, `turtle`, `n3`, `nt`).
 
 After the command runs, open the generated HTML file in a browser.
+The CLI summary includes loaded ontologies, total ontology references, and unresolved imports.
 
 In the graph UI:
 - Use mouse wheel / trackpad to zoom.
@@ -63,6 +71,14 @@ ontoviewer/
   loader.py      # ontology loading + recursive import resolution
   visualize.py   # class/relation extraction + interactive graph rendering
   model.py       # shared dataclasses
+tests/
+  test_loader.py # recursive import traversal tests
+```
+
+## Tests
+
+```bash
+pytest
 ```
 
 ## Notes and current limits
