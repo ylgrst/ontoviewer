@@ -22,9 +22,12 @@ dependencies = [
 dev = [
   "pytest>=8.0.0"
 ]
+web = [
+  "flask>=3.0.0"
+]
 
 [project.urls]
-Repository = "https://github.com/<your-username>/ontoviewer"
+Repository = "https://github.com/ylgrst/ontoviewer"
 
 [project.scripts]
 ontoviewer = "ontoviewer.cli:app"

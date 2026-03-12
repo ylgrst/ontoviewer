@@ -58,5 +58,38 @@ def render(
             typer.echo(f"  - {err}")
 
 
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind."),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        min=1,
+        max=65535,
+        help="TCP port for the web UI server.",
+    ),
+    storage_dir: Path = typer.Option(
+        Path(".ontoviewer-web"),
+        "--storage-dir",
+        help="Directory used to store uploaded ontologies and generated HTML files.",
+    ),
+) -> None:
+    """Run a local web UI for uploading and visualizing ontologies."""
+    try:
+        from ontoviewer.webapp import create_app
+    except ModuleNotFoundError as exc:
+        if exc.name in {"flask", "werkzeug"}:
+            typer.echo(
+                "Web UI dependencies are missing. Install with: pip install -e '.[web]'",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        raise
+
+    flask_app = create_app(storage_dir=storage_dir)
+    typer.echo(f"Starting OntoViewer web UI at http://{host}:{port}")
+    flask_app.run(host=host, port=port, debug=False)
+
+
 if __name__ == "__main__":
     app()

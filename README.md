@@ -12,6 +12,7 @@ Current MVP includes:
 - Show ontology import links as dashed edges labeled `imports`.
 - Keep declared import nodes visible even when they cannot be loaded.
 - Prefer human-readable labels from class/property annotations when available.
+- Run a local web UI with file upload and in-browser graph preview.
 
 ## Why this project?
 
@@ -42,6 +43,12 @@ For development (tests):
 pip install -e ".[dev]"
 ```
 
+For local web UI:
+
+```bash
+pip install -e ".[web]"
+```
+
 ## Usage
 
 Render a graph:
@@ -66,13 +73,33 @@ In the graph UI:
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 
+### Local Web UI
+
+Start the web UI:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8000
+```
+
+Then open `http://127.0.0.1:8000` in your browser.
+
+Web UI features:
+- Upload a local ontology file.
+- Configure import recursion depth.
+- Set optional RDF format.
+- Choose default label mode (`human` or `raw`).
+- Preview the generated graph inline.
+- Download the generated HTML graph.
+
 ## Project layout
 
 ```text
 ontoviewer/
   cli.py         # command-line entrypoint
   loader.py      # ontology loading + recursive import resolution
+  labels.py      # human-readable annotation label resolution
   visualize.py   # class/relation extraction + interactive graph rendering
+  webapp.py      # Flask local web UI
   model.py       # shared dataclasses
 tests/
   test_loader.py # recursive import traversal tests
