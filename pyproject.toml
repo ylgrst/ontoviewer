@@ -24,8 +24,5 @@ Repository = "https://github.com/<your-username>/ontoviewer"
 [project.scripts]
 ontoviewer = "ontoviewer.cli:app"
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["ontoviewer*"]

@@ -58,7 +58,7 @@ In the graph UI:
 ## Project layout
 
 ```text
-src/ontoviewer/
+ontoviewer/
   cli.py         # command-line entrypoint
   loader.py      # ontology loading + recursive import resolution
   visualize.py   # class/relation extraction + interactive graph rendering
