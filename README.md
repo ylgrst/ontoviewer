@@ -9,7 +9,7 @@ Current MVP includes:
 - Represent each ontology as a main node linked to its classes.
 - Render an interactive HTML graph with zoom/pan controls.
 - Color nodes by originating ontology.
-- Collapse/expand class nodes by ontology group.
+- Collapse/expand ontology groups interactively.
 - Show ontology import links as dashed edges labeled `imports`.
 - Keep declared import nodes visible even when they cannot be loaded.
 - Prefer human-readable labels from class/property annotations when available.
@@ -73,14 +73,14 @@ In the graph UI:
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
-- See ontology-to-class membership links and ontology-to-ontology `imports` links in the same graph.
+- Click a class node to collapse/expand its ontology group.
+- Zooming out auto-collapses ontology groups; zooming back in auto-expands them.
 - Use the built-in legend to understand node and edge types.
 
 Edge conventions:
 - `subClassOf`: solid blue arrow, no text label (reduced clutter).
 - `property relation`: solid dark arrow, labeled with property name.
 - `imports`: dashed orange arrow between ontology nodes.
-- `ontology membership`: dashed gray arrow from ontology node to class node.
 
 ### Local Web UI
 

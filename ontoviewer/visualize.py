@@ -69,12 +69,30 @@ def render_interactive_graph(
           "interaction": {
             "hover": true,
             "navigationButtons": true,
-            "keyboard": true
+            "keyboard": true,
+            "hideEdgesOnDrag": true
+          },
+          "layout": {
+            "improvedLayout": true
+          },
+          "nodes": {
+            "font": {
+              "size": 14,
+              "strokeWidth": 4,
+              "strokeColor": "#f3f4f6"
+            }
           },
           "physics": {
             "enabled": true,
+            "solver": "barnesHut",
+            "barnesHut": {
+              "gravitationalConstant": -8000,
+              "springLength": 190,
+              "springConstant": 0.02,
+              "damping": 0.28
+            },
             "stabilization": {
-              "iterations": 200
+              "iterations": 300
             }
           },
           "edges": {
@@ -102,7 +120,12 @@ def render_interactive_graph(
             color=ontology_color.get(iri, "#e5e7eb"),
             borderWidth=2 if is_loaded else 1,
             font={"color": "#111827" if is_loaded else "#6b7280"},
-            group="ontology-meta",
+            hidden=True,
+            physics=False,
+            group=ontology_group.get(iri, "unknown"),
+            ontologyGroup=ontology_group.get(iri, "unknown"),
+            ontologyIri=iri,
+            isOntologyNode=True,
         )
 
     class_nodes: Set[str] = set()
@@ -168,17 +191,9 @@ def render_interactive_graph(
             isClassNode=True,
             humanLabel=human_display,
             rawLabel=raw_display,
+            ontologyGroup=group,
+            ontologyIri=owner,
         )
-        if owner:
-            net.add_edge(
-                f"ont:{owner}",
-                cls,
-                color="#94a3b8",
-                dashes=True,
-                width=1,
-                title="defined in ontology",
-                edgeType="ontology-membership",
-            )
 
     rendered_relations = 0
     for src, dst, human_label, raw_label, edge_type in relation_edges:
@@ -370,10 +385,6 @@ def _inject_cluster_controls(
   border-top-color: #f59e0b;
   border-top-style: dashed;
 }}
-.ontoviewer-line-membership {{
-  border-top-color: #94a3b8;
-  border-top-style: dashed;
-}}
 .ontoviewer-node-box {{
   width: 22px;
   height: 14px;
@@ -410,6 +421,11 @@ def _inject_cluster_controls(
   border: 1px solid #9ca3af;
   display: inline-block;
 }}
+.ontoviewer-legend-hint {{
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}}
 </style>
 <div class="ontoviewer-controls">
   <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
@@ -422,7 +438,8 @@ def _inject_cluster_controls(
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
-  <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-membership"></span> ontology-to-class membership</div>
+  <div class="ontoviewer-legend-hint">Click a class node to collapse its ontology cluster.</div>
+  <div class="ontoviewer-legend-hint">Click a cluster node to expand it back.</div>
   <hr />
   <div class="ontoviewer-legend-title">Ontology Colors</div>
   <ul class="ontoviewer-ontology-list">
@@ -433,11 +450,49 @@ def _inject_cluster_controls(
 <script>
 (function() {{
   const groupLabels = {json.dumps(group_labels)};
-  const clusterIds = [];
+  const clusterIds = new Set();
   let labelMode = {json.dumps(initial_label_mode)};
+  let autoCollapsedFromZoom = false;
+  const CLUSTER_IN_THRESHOLD = 0.36;
+  const EXPAND_OUT_THRESHOLD = 0.52;
 
   function labelModeText(mode) {{
     return mode === "human" ? "Show raw labels" : "Show human labels";
+  }}
+
+  function clusterIdFromGroup(groupId) {{
+    return "cluster:" + groupId;
+  }}
+
+  function collapseGroup(groupId, label) {{
+    const clusterId = clusterIdFromGroup(groupId);
+    if (network.isCluster(clusterId)) {{
+      return;
+    }}
+    let clusterColor = "#f3f4f6";
+    network.body.data.nodes.forEach((node) => {{
+      if (node.group === groupId && node.isClassNode && node.color) {{
+        clusterColor = node.color;
+      }}
+    }});
+    network.cluster({{
+      joinCondition: function(nodeOptions) {{
+        return nodeOptions.group === groupId;
+      }},
+      clusterNodeProperties: {{
+        id: clusterId,
+        ontologyCluster: true,
+        ontologyGroup: groupId,
+        label: label,
+        borderWidth: 3,
+        shape: "database",
+        color: clusterColor,
+        font: {{
+          color: "#111827"
+        }}
+      }}
+    }});
+    clusterIds.add(clusterId);
   }}
 
   function applyLabelMode(mode) {{
@@ -485,41 +540,60 @@ def _inject_cluster_controls(
 
   window.ontoviewerCollapseByOntology = function() {{
     Object.entries(groupLabels).forEach(([groupId, label]) => {{
-      const clusterId = "cluster:" + groupId;
-      if (network.isCluster(clusterId)) {{
-        return;
-      }}
-      network.cluster({{
-        joinCondition: function(nodeOptions) {{
-          const nodeId = String(nodeOptions.id || "");
-          return nodeOptions.group === groupId && !nodeId.startsWith("ont:");
-        }},
-        clusterNodeProperties: {{
-          id: clusterId,
-          label: "Cluster: " + label,
-          borderWidth: 3,
-          shape: "database",
-          color: "#f3f4f6",
-          font: {{
-            color: "#111827"
-          }}
-        }}
-      }});
-      clusterIds.push(clusterId);
+      collapseGroup(groupId, label);
     }});
   }};
 
   window.ontoviewerExpandAll = function() {{
-    clusterIds.forEach((clusterId) => {{
+    Array.from(clusterIds).forEach((clusterId) => {{
       if (network.isCluster(clusterId)) {{
         network.openCluster(clusterId);
       }}
     }});
+    clusterIds.clear();
   }};
 
   window.ontoviewerToggleLabels = function() {{
     applyLabelMode(labelMode === "human" ? "raw" : "human");
   }};
+
+  network.on("click", function(params) {{
+    if (!params.nodes || params.nodes.length === 0) {{
+      return;
+    }}
+    const nodeId = params.nodes[0];
+
+    if (network.isCluster(nodeId)) {{
+      network.openCluster(nodeId);
+      clusterIds.delete(nodeId);
+      return;
+    }}
+
+    const node = network.body.data.nodes.get(nodeId);
+    if (!node || !node.isClassNode) {{
+      return;
+    }}
+    const groupId = node.ontologyGroup || node.group;
+    const label = groupLabels[groupId] || "Ontology";
+    const clusterId = clusterIdFromGroup(groupId);
+    if (network.isCluster(clusterId)) {{
+      network.openCluster(clusterId);
+      clusterIds.delete(clusterId);
+    }} else {{
+      collapseGroup(groupId, label);
+    }}
+  }});
+
+  network.on("zoom", function(params) {{
+    const scale = params.scale;
+    if (scale < CLUSTER_IN_THRESHOLD && !autoCollapsedFromZoom) {{
+      window.ontoviewerCollapseByOntology();
+      autoCollapsedFromZoom = true;
+    }} else if (scale > EXPAND_OUT_THRESHOLD && autoCollapsedFromZoom) {{
+      window.ontoviewerExpandAll();
+      autoCollapsedFromZoom = false;
+    }}
+  }});
 
   applyLabelMode(labelMode);
 }})();
