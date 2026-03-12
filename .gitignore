@@ -8,3 +8,4 @@ dist/
 build/
 *.html
 .vscode/
+.ontoviewer-web/

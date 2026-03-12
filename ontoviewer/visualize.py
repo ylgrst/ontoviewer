@@ -36,6 +36,17 @@ def render_interactive_graph(
     label_mode: LabelMode = "human",
 ) -> Dict[str, int]:
     """Render an interactive HTML graph with ontology-aware colors and clustering controls."""
+    source_to_ontology_iri = {
+        document.source: ontology_iri for ontology_iri, document in closure.documents.items()
+    }
+    canonical_import_edges = {
+        (
+            source_to_ontology_iri.get(edge.source_iri, edge.source_iri),
+            source_to_ontology_iri.get(edge.target_iri, edge.target_iri),
+        )
+        for edge in closure.import_edges
+    }
+
     loaded_ontology_ids = list(closure.documents.keys())
     ontology_color = {iri: PALETTE[idx % len(PALETTE)] for idx, iri in enumerate(loaded_ontology_ids)}
     ontology_group = {iri: _group_id(iri) for iri in loaded_ontology_ids}
@@ -44,9 +55,9 @@ def render_interactive_graph(
     ontology_refs: Set[str] = set(loaded_ontology_ids)
     if closure.root_iri:
         ontology_refs.add(closure.root_iri)
-    for edge in closure.import_edges:
-        ontology_refs.add(edge.source_iri)
-        ontology_refs.add(edge.target_iri)
+    for source_iri, target_iri in canonical_import_edges:
+        ontology_refs.add(source_iri)
+        ontology_refs.add(target_iri)
     ontology_ids = sorted(ontology_refs)
 
     net = Network(height="850px", width="100%", directed=True, notebook=False, cdn_resources="in_line")
@@ -156,6 +167,16 @@ def render_interactive_graph(
             humanLabel=human_display,
             rawLabel=raw_display,
         )
+        if owner:
+            net.add_edge(
+                f"ont:{owner}",
+                cls,
+                color="#cbd5e1",
+                dashes=True,
+                width=1,
+                title="defined in ontology",
+                edgeType="ontology-membership",
+            )
 
     rendered_relations = 0
     for src, dst, human_label, raw_label, edge_type in relation_edges:
@@ -174,13 +195,15 @@ def render_interactive_graph(
             )
             rendered_relations += 1
 
-    for edge in closure.import_edges:
+    for source_iri, target_iri in canonical_import_edges:
         net.add_edge(
-            f"ont:{edge.source_iri}",
-            f"ont:{edge.target_iri}",
+            f"ont:{source_iri}",
+            f"ont:{target_iri}",
             label="imports",
             color="#9ca3af",
             dashes=True,
+            width=2,
+            edgeType="imports",
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +211,7 @@ def render_interactive_graph(
     _inject_cluster_controls(output_path, group_label, initial_label_mode=label_mode)
 
     unresolved_import_targets = {
-        edge.target_iri for edge in closure.import_edges if edge.target_iri not in closure.documents
+        target_iri for _, target_iri in canonical_import_edges if target_iri not in closure.documents
     }
 
     return {
@@ -196,7 +219,7 @@ def render_interactive_graph(
         "ontology_refs": len(ontology_ids),
         "classes": len(class_nodes),
         "relations": rendered_relations,
-        "imports": len(closure.import_edges),
+        "imports": len(canonical_import_edges),
         "unresolved_imports": len(unresolved_import_targets),
     }
 

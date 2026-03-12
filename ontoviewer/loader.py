@@ -57,13 +57,13 @@ def load_ontology_closure(
             closure.root_iri = ontology_iri
 
         for imported_iri in _discover_imports(graph):
-            edge_key = (ontology_iri, imported_iri)
+            next_source = _resolve_import_source(imported_iri, source)
+            edge_key = (ontology_iri, next_source)
             if edge_key not in seen_import_edges:
                 seen_import_edges.add(edge_key)
-                closure.import_edges.append(ImportEdge(source_iri=ontology_iri, target_iri=imported_iri))
+                closure.import_edges.append(ImportEdge(source_iri=ontology_iri, target_iri=next_source))
 
             if depth < max_depth:
-                next_source = _resolve_import_source(imported_iri, source)
                 queue.append((next_source, depth + 1))
 
     if not closure.root_iri and closure.documents:

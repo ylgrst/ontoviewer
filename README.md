@@ -6,6 +6,7 @@ Current MVP includes:
 - Load a local OWL/RDF ontology file.
 - Resolve `owl:imports` recursively (configurable max depth).
 - Extract classes and class-to-class relations.
+- Represent each ontology as a main node linked to its classes.
 - Render an interactive HTML graph with zoom/pan controls.
 - Color nodes by originating ontology.
 - Collapse/expand class nodes by ontology group.
@@ -72,6 +73,7 @@ In the graph UI:
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
+- See ontology-to-class membership links and ontology-to-ontology `imports` links in the same graph.
 
 ### Local Web UI
 
