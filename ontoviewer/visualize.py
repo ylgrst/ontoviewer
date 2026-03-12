@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from html import escape
 from pathlib import Path
 from typing import Dict, Literal, Set, Tuple
 
@@ -49,6 +50,7 @@ def render_interactive_graph(
 
     loaded_ontology_ids = list(closure.documents.keys())
     ontology_color = {iri: PALETTE[idx % len(PALETTE)] for idx, iri in enumerate(loaded_ontology_ids)}
+    ontology_legend = {iri: ontology_color[iri] for iri in loaded_ontology_ids}
     ontology_group = {iri: _group_id(iri) for iri in loaded_ontology_ids}
     group_label = {ontology_group[iri]: _short_label(iri) for iri in loaded_ontology_ids}
 
@@ -171,7 +173,7 @@ def render_interactive_graph(
             net.add_edge(
                 f"ont:{owner}",
                 cls,
-                color="#cbd5e1",
+                color="#94a3b8",
                 dashes=True,
                 width=1,
                 title="defined in ontology",
@@ -181,18 +183,28 @@ def render_interactive_graph(
     rendered_relations = 0
     for src, dst, human_label, raw_label, edge_type in relation_edges:
         if src in class_nodes and dst in class_nodes:
-            color = "#6b7280" if edge_type == "subclass" else "#111827"
-            display_label = human_label if label_mode == "human" else raw_label
-            net.add_edge(
-                src,
-                dst,
-                label=display_label,
-                title=edge_type,
-                color=color,
-                edgeType=edge_type,
-                humanLabel=human_label,
-                rawLabel=raw_label,
-            )
+            if edge_type == "subclass":
+                net.add_edge(
+                    src,
+                    dst,
+                    title="subClassOf",
+                    color="#2563eb",
+                    width=1.6,
+                    edgeType=edge_type,
+                )
+            else:
+                display_label = human_label if label_mode == "human" else raw_label
+                net.add_edge(
+                    src,
+                    dst,
+                    label=display_label,
+                    title=edge_type,
+                    color="#111827",
+                    width=1.8,
+                    edgeType=edge_type,
+                    humanLabel=human_label,
+                    rawLabel=raw_label,
+                )
             rendered_relations += 1
 
     for source_iri, target_iri in canonical_import_edges:
@@ -200,15 +212,22 @@ def render_interactive_graph(
             f"ont:{source_iri}",
             f"ont:{target_iri}",
             label="imports",
-            color="#9ca3af",
+            color="#f59e0b",
             dashes=True,
-            width=2,
+            width=2.4,
             edgeType="imports",
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     net.write_html(str(output_path))
-    _inject_cluster_controls(output_path, group_label, initial_label_mode=label_mode)
+    has_unresolved_ontology_nodes = any(iri not in closure.documents for iri in ontology_ids)
+    _inject_cluster_controls(
+        output_path,
+        group_label,
+        initial_label_mode=label_mode,
+        ontology_legend=ontology_legend,
+        has_unresolved_ontology_nodes=has_unresolved_ontology_nodes,
+    )
 
     unresolved_import_targets = {
         target_iri for _, target_iri in canonical_import_edges if target_iri not in closure.documents
@@ -270,8 +289,30 @@ def _inject_cluster_controls(
     group_labels: Dict[str, str],
     *,
     initial_label_mode: LabelMode,
+    ontology_legend: Dict[str, str],
+    has_unresolved_ontology_nodes: bool,
 ) -> None:
     html = output_path.read_text(encoding="utf-8")
+    ontology_items = "".join(
+        f"""
+        <li class="ontoviewer-ontology-item">
+          <span class="ontoviewer-swatch" style="background:{escape(color)}"></span>
+          <span title="{escape(iri)}">{escape(_short_label(iri))}</span>
+        </li>
+        """
+        for iri, color in ontology_legend.items()
+    )
+    if not ontology_items:
+        ontology_items = "<li class='ontoviewer-ontology-item'><span>No loaded ontologies</span></li>"
+
+    unresolved_item = ""
+    if has_unresolved_ontology_nodes:
+        unresolved_item = """
+        <li class="ontoviewer-ontology-item">
+          <span class="ontoviewer-swatch" style="background:#e5e7eb"></span>
+          <span>Unresolved imported ontology</span>
+        </li>
+        """
 
     controls = f"""
 <style>
@@ -286,6 +327,9 @@ def _inject_cluster_controls(
   padding: 8px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   font-family: sans-serif;
+  max-width: 420px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
 }}
 .ontoviewer-controls button {{
   margin-right: 6px;
@@ -295,11 +339,96 @@ def _inject_cluster_controls(
   cursor: pointer;
   background: #f8fafc;
 }}
+.ontoviewer-controls hr {{
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+  margin: 10px 0;
+}}
+.ontoviewer-legend-title {{
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 4px;
+}}
+.ontoviewer-legend-row {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #4b5563;
+  margin-bottom: 4px;
+}}
+.ontoviewer-line {{
+  display: inline-block;
+  width: 28px;
+  border-top: 2px solid #111827;
+}}
+.ontoviewer-line-subclass {{
+  border-top-color: #2563eb;
+}}
+.ontoviewer-line-imports {{
+  border-top-color: #f59e0b;
+  border-top-style: dashed;
+}}
+.ontoviewer-line-membership {{
+  border-top-color: #94a3b8;
+  border-top-style: dashed;
+}}
+.ontoviewer-node-box {{
+  width: 22px;
+  height: 14px;
+  border: 2px solid #374151;
+  border-radius: 4px;
+  background: #ffffff;
+  display: inline-block;
+}}
+.ontoviewer-node-dot {{
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #9ca3af;
+  display: inline-block;
+}}
+.ontoviewer-ontology-list {{
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}}
+.ontoviewer-ontology-item {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #374151;
+}}
+.ontoviewer-swatch {{
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid #9ca3af;
+  display: inline-block;
+}}
 </style>
 <div class="ontoviewer-controls">
   <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
   <button onclick="window.ontoviewerExpandAll()">Expand all</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
+  <hr />
+  <div class="ontoviewer-legend-title">Legend</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-node-box"></span> Ontology node</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-node-dot"></span> Class node (colored by ontology)</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-membership"></span> ontology-to-class membership</div>
+  <hr />
+  <div class="ontoviewer-legend-title">Ontology Colors</div>
+  <ul class="ontoviewer-ontology-list">
+    {ontology_items}
+    {unresolved_item}
+  </ul>
 </div>
 <script>
 (function() {{

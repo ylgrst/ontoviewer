@@ -74,6 +74,13 @@ In the graph UI:
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 - See ontology-to-class membership links and ontology-to-ontology `imports` links in the same graph.
+- Use the built-in legend to understand node and edge types.
+
+Edge conventions:
+- `subClassOf`: solid blue arrow, no text label (reduced clutter).
+- `property relation`: solid dark arrow, labeled with property name.
+- `imports`: dashed orange arrow between ontology nodes.
+- `ontology membership`: dashed gray arrow from ontology node to class node.
 
 ### Local Web UI
 
