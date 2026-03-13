@@ -514,8 +514,8 @@ html, body {{
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line" style="border-top-color:#94a3b8;border-top-style:dashed;"></span> ontology membership edge</div>
-  <div class="ontoviewer-legend-hint">Click a class node to collapse only its direct subclasses.</div>
-  <div class="ontoviewer-legend-hint">Click a cluster node to expand it back.</div>
+  <div class="ontoviewer-legend-hint">Click a class node to fold or unfold its descendant subclass tree.</div>
+  <div class="ontoviewer-legend-hint">Use ontology collapse only for high-level overview.</div>
   <hr />
   <div class="ontoviewer-legend-title">Ontology Colors</div>
   <ul class="ontoviewer-ontology-list">
@@ -527,6 +527,7 @@ html, body {{
 (function() {{
   const groupLabels = {json.dumps(group_labels)};
   const clusterIds = new Set();
+  const collapsedClassNodes = new Set();
   let labelMode = {json.dumps(initial_label_mode)};
   let ontologyAttached = false;
 
@@ -540,10 +541,6 @@ html, body {{
 
   function clusterIdFromGroup(groupId) {{
     return "cluster:" + groupId;
-  }}
-
-  function subclassClusterId(parentNodeId) {{
-    return "subclasses:" + parentNodeId;
   }}
 
   function collapseGroup(groupId, label) {{
@@ -577,107 +574,92 @@ html, body {{
     clusterIds.add(clusterId);
   }}
 
-  function directSubclassIds(parentNodeId) {{
-    const subclassIds = [];
+  function subclassChildrenMap() {{
+    const childrenByParent = new Map();
     network.body.data.edges.forEach((edge) => {{
-      if (edge.edgeType === "subclass" && edge.to === parentNodeId) {{
-        subclassIds.push(edge.from);
+      if (edge.edgeType !== "subclass") {{
+        return;
       }}
+      if (!childrenByParent.has(edge.to)) {{
+        childrenByParent.set(edge.to, []);
+      }}
+      childrenByParent.get(edge.to).push(edge.from);
     }});
-    return subclassIds.filter((nodeId) => {{
-      const node = network.body.data.nodes.get(nodeId);
-      return node && node.isClassNode;
-    }});
+    return childrenByParent;
   }}
 
-  function collapseDirectSubclasses(parentNodeId) {{
-    const clusterId = subclassClusterId(parentNodeId);
-    if (network.isCluster(clusterId)) {{
-      return;
-    }}
-
-    const parentNode = network.body.data.nodes.get(parentNodeId);
-    if (!parentNode) {{
-      return;
-    }}
-
-    const subclassIds = directSubclassIds(parentNodeId);
-    if (subclassIds.length === 0) {{
-      return;
-    }}
-
-    const subclassIdSet = new Set(subclassIds);
-    let clusterColor = parentNode.color || "#f3f4f6";
-
-    network.cluster({{
-      joinCondition: function(nodeOptions) {{
-        return subclassIdSet.has(nodeOptions.id);
-      }},
-      clusterNodeProperties: {{
-        id: clusterId,
-        subclassCluster: true,
-        parentNodeId: parentNodeId,
-        label: parentNode.label + " subclasses",
-        borderWidth: 2,
-        shape: "dot",
-        size: 20,
-        color: clusterColor,
-        font: {{
-          color: "#111827"
-        }}
+  function descendantClassIds(parentNodeId, childrenByParent, visited) {{
+    const descendants = [];
+    const directChildren = childrenByParent.get(parentNodeId) || [];
+    directChildren.forEach((childId) => {{
+      if (visited.has(childId)) {{
+        return;
       }}
+      visited.add(childId);
+      descendants.push(childId);
+      descendants.push(...descendantClassIds(childId, childrenByParent, visited));
     }});
-    clusterIds.add(clusterId);
+    return descendants;
+  }}
+
+  function hiddenClassIds() {{
+    const childrenByParent = subclassChildrenMap();
+    const hiddenIds = new Set();
+    collapsedClassNodes.forEach((parentNodeId) => {{
+      descendantClassIds(parentNodeId, childrenByParent, new Set()).forEach((nodeId) => {{
+        hiddenIds.add(nodeId);
+      }});
+    }});
+    return hiddenIds;
+  }}
+
+  function collapsedDescendantCount(nodeId) {{
+    if (!collapsedClassNodes.has(nodeId)) {{
+      return 0;
+    }}
+    return descendantClassIds(nodeId, subclassChildrenMap(), new Set()).length;
+  }}
+
+  function nodeBaseLabel(node, mode) {{
+    if (mode === "human") {{
+      return node.humanLabel || node.rawLabel || node.label;
+    }}
+    return node.rawLabel || node.humanLabel || node.label;
   }}
 
   function applyLabelMode(mode) {{
     labelMode = mode;
     const nodesDs = network.body.data.nodes;
-    const edgesDs = network.body.data.edges;
-
+    const hiddenIds = hiddenClassIds();
     const nodeUpdates = [];
     nodesDs.forEach((node) => {{
       if (!node.isClassNode) {{
         return;
       }}
-      const nextLabel = mode === "human"
-        ? (node.humanLabel || node.rawLabel || node.label)
-        : (node.rawLabel || node.humanLabel || node.label);
-      if (nextLabel !== node.label) {{
-        nodeUpdates.push({{ id: node.id, label: nextLabel }});
+      const baseLabel = nodeBaseLabel(node, mode);
+      const collapsedCount = collapsedClassNodes.has(node.id) ? collapsedDescendantCount(node.id) : 0;
+      const suffix = collapsedCount > 0 ? " (+" + collapsedCount + ")" : "";
+      const nextLabel = baseLabel + suffix;
+      const nextHidden = hiddenIds.has(node.id);
+      if (nextLabel !== node.label || nextHidden !== Boolean(node.hidden)) {{
+        nodeUpdates.push({{ id: node.id, label: nextLabel, hidden: nextHidden }});
       }}
     }});
     if (nodeUpdates.length > 0) {{
       nodesDs.update(nodeUpdates);
     }}
 
-    const edgeUpdates = [];
-    edgesDs.forEach((edge) => {{
-      if (edge.edgeType !== "property") {{
-        return;
-      }}
-      const nextLabel = mode === "human"
-        ? (edge.humanLabel || edge.rawLabel || edge.label)
-        : (edge.rawLabel || edge.humanLabel || edge.label);
-      if (nextLabel !== edge.label) {{
-        edgeUpdates.push({{ id: edge.id, label: nextLabel }});
-      }}
-    }});
-    if (edgeUpdates.length > 0) {{
-      edgesDs.update(edgeUpdates);
-    }}
-
     const toggleBtn = document.getElementById("ontoviewer-label-toggle");
     if (toggleBtn) {{
       toggleBtn.textContent = labelModeText(mode);
     }}
+
+    refreshEdgeVisibility();
   }}
 
   function applyOntologyAttachment(attached) {{
     ontologyAttached = attached;
     const nodesDs = network.body.data.nodes;
-    const edgesDs = network.body.data.edges;
-
     const nodeUpdates = [];
     nodesDs.forEach((node) => {{
       if (!node.isOntologyNode) {{
@@ -692,23 +674,41 @@ html, body {{
       nodesDs.update(nodeUpdates);
     }}
 
+    const attachBtn = document.getElementById("ontoviewer-attach-toggle");
+    if (attachBtn) {{
+      attachBtn.textContent = attachmentModeText(attached);
+    }}
+
+    refreshEdgeVisibility();
+  }}
+
+  function refreshEdgeVisibility() {{
+    const edgesDs = network.body.data.edges;
+    const hiddenIds = hiddenClassIds();
     const edgeUpdates = [];
     edgesDs.forEach((edge) => {{
-      if (edge.edgeType !== "imports" && edge.edgeType !== "ontology-membership") {{
-        return;
+      let nextHidden = false;
+      if (edge.edgeType === "imports") {{
+        nextHidden = !ontologyAttached;
+      }} else if (edge.edgeType === "ontology-membership") {{
+        nextHidden = !ontologyAttached || hiddenIds.has(edge.to);
+      }} else {{
+        nextHidden = hiddenIds.has(edge.from) || hiddenIds.has(edge.to);
       }}
-      const nextHidden = !attached;
-      if (edge.hidden !== nextHidden) {{
-        edgeUpdates.push({{ id: edge.id, hidden: nextHidden }});
+
+      let nextLabel = edge.label;
+      if (edge.edgeType === "property") {{
+        nextLabel = labelMode === "human"
+          ? (edge.humanLabel || edge.rawLabel || edge.label)
+          : (edge.rawLabel || edge.humanLabel || edge.label);
+      }}
+
+      if (nextHidden !== Boolean(edge.hidden) || nextLabel !== edge.label) {{
+        edgeUpdates.push({{ id: edge.id, hidden: nextHidden, label: nextLabel }});
       }}
     }});
     if (edgeUpdates.length > 0) {{
       edgesDs.update(edgeUpdates);
-    }}
-
-    const attachBtn = document.getElementById("ontoviewer-attach-toggle");
-    if (attachBtn) {{
-      attachBtn.textContent = attachmentModeText(attached);
     }}
   }}
 
@@ -725,6 +725,8 @@ html, body {{
       }}
     }});
     clusterIds.clear();
+    collapsedClassNodes.clear();
+    applyLabelMode(labelMode);
   }};
 
   window.ontoviewerToggleLabels = function() {{
@@ -744,6 +746,7 @@ html, body {{
     if (network.isCluster(nodeId)) {{
       network.openCluster(nodeId);
       clusterIds.delete(nodeId);
+      applyLabelMode(labelMode);
       return;
     }}
 
@@ -751,13 +754,16 @@ html, body {{
     if (!node || !node.isClassNode) {{
       return;
     }}
-    const clusterId = subclassClusterId(nodeId);
-    if (network.isCluster(clusterId)) {{
-      network.openCluster(clusterId);
-      clusterIds.delete(clusterId);
-    }} else {{
-      collapseDirectSubclasses(nodeId);
+    const descendantCount = descendantClassIds(nodeId, subclassChildrenMap(), new Set()).length;
+    if (descendantCount === 0) {{
+      return;
     }}
+    if (collapsedClassNodes.has(nodeId)) {{
+      collapsedClassNodes.delete(nodeId);
+    }} else {{
+      collapsedClassNodes.add(nodeId);
+    }}
+    applyLabelMode(labelMode);
   }});
 
   applyOntologyAttachment(false);

@@ -72,7 +72,7 @@ In the graph UI:
 - Drag background to pan.
 - Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
 - Use **Collapse by ontology** to reduce visual complexity.
-- Use **Expand all** to restore full detail.
+- Use **Expand all** to restore both ontology clusters and folded subclass trees.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 - Click a class node to collapse/expand only its direct subclasses.
 - Use the built-in legend to understand node and edge types.
