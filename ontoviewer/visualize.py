@@ -514,7 +514,7 @@ html, body {{
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line" style="border-top-color:#94a3b8;border-top-style:dashed;"></span> ontology membership edge</div>
-  <div class="ontoviewer-legend-hint">Click a class node to collapse its ontology cluster.</div>
+  <div class="ontoviewer-legend-hint">Click a class node to collapse only its direct subclasses.</div>
   <div class="ontoviewer-legend-hint">Click a cluster node to expand it back.</div>
   <hr />
   <div class="ontoviewer-legend-title">Ontology Colors</div>
@@ -542,6 +542,10 @@ html, body {{
     return "cluster:" + groupId;
   }}
 
+  function subclassClusterId(parentNodeId) {{
+    return "subclasses:" + parentNodeId;
+  }}
+
   function collapseGroup(groupId, label) {{
     const clusterId = clusterIdFromGroup(groupId);
     if (network.isCluster(clusterId)) {{
@@ -564,6 +568,59 @@ html, body {{
         label: label,
         borderWidth: 3,
         shape: "database",
+        color: clusterColor,
+        font: {{
+          color: "#111827"
+        }}
+      }}
+    }});
+    clusterIds.add(clusterId);
+  }}
+
+  function directSubclassIds(parentNodeId) {{
+    const subclassIds = [];
+    network.body.data.edges.forEach((edge) => {{
+      if (edge.edgeType === "subclass" && edge.to === parentNodeId) {{
+        subclassIds.push(edge.from);
+      }}
+    }});
+    return subclassIds.filter((nodeId) => {{
+      const node = network.body.data.nodes.get(nodeId);
+      return node && node.isClassNode;
+    }});
+  }}
+
+  function collapseDirectSubclasses(parentNodeId) {{
+    const clusterId = subclassClusterId(parentNodeId);
+    if (network.isCluster(clusterId)) {{
+      return;
+    }}
+
+    const parentNode = network.body.data.nodes.get(parentNodeId);
+    if (!parentNode) {{
+      return;
+    }}
+
+    const subclassIds = directSubclassIds(parentNodeId);
+    if (subclassIds.length === 0) {{
+      return;
+    }}
+
+    const subclassIdSet = new Set(subclassIds);
+    let clusterColor = parentNode.color || "#f3f4f6";
+
+    network.cluster({{
+      joinCondition: function(nodeOptions) {{
+        return subclassIdSet.has(nodeOptions.id);
+      }},
+      clusterNodeProperties: {{
+        id: clusterId,
+        subclassCluster: true,
+        parentNodeId: parentNodeId,
+        label: parentNode.label + " subclasses",
+        borderWidth: 2,
+        shape: "dot",
+        size: 20,
         color: clusterColor,
         font: {{
           color: "#111827"
@@ -694,14 +751,12 @@ html, body {{
     if (!node || !node.isClassNode) {{
       return;
     }}
-    const groupId = node.ontologyGroup;
-    const label = groupLabels[groupId] || "Ontology";
-    const clusterId = clusterIdFromGroup(groupId);
+    const clusterId = subclassClusterId(nodeId);
     if (network.isCluster(clusterId)) {{
       network.openCluster(clusterId);
       clusterIds.delete(clusterId);
     }} else {{
-      collapseGroup(groupId, label);
+      collapseDirectSubclasses(nodeId);
     }}
   }});
 

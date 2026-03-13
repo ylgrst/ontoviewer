@@ -74,7 +74,7 @@ In the graph UI:
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore full detail.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
-- Click a class node to collapse/expand its ontology group.
+- Click a class node to collapse/expand only its direct subclasses.
 - Use the built-in legend to understand node and edge types.
 
 Edge conventions:
