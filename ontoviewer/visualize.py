@@ -96,10 +96,7 @@ def render_interactive_graph(
             }
           },
           "edges": {
-            "smooth": {
-              "enabled": true,
-              "type": "dynamic"
-            },
+            "smooth": false,
             "arrows": {
               "to": {
                 "enabled": true
