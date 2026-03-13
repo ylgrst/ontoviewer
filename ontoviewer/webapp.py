@@ -7,7 +7,7 @@ from time import time
 from typing import Dict, Optional
 from uuid import uuid4
 
-from flask import Flask, abort, render_template_string, request, send_file, url_for
+from flask import Flask, abort, redirect, render_template_string, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
 from ontoviewer.loader import load_ontology_closure
@@ -41,6 +41,13 @@ def create_app(*, storage_dir: Path) -> Flask:
     def _default_state() -> dict[str, str]:
         return {"max_depth": "2", "rdf_format": "", "label_mode": "human"}
 
+    def _state_from_result(result: RenderResult) -> dict[str, str]:
+        return {
+            "max_depth": str(result.max_depth),
+            "rdf_format": result.rdf_format or "",
+            "label_mode": result.label_mode,
+        }
+
     def _prune_old_renders() -> None:
         if len(renders) <= MAX_STORED_RENDERS:
             return
@@ -68,10 +75,17 @@ def create_app(*, storage_dir: Path) -> Flask:
 
     @app.get("/")
     def home() -> str:
-        return _render_home()
+        render_id = (request.args.get("render_id") or "").strip()
+        result = renders.get(render_id) if render_id else None
+        if render_id and result is None:
+            return _render_home(
+                error="The requested render is no longer available. Please upload the ontology again."
+            )
+        state = _state_from_result(result) if result else _default_state()
+        return _render_home(result=result, state=state)
 
     @app.post("/render")
-    def render() -> str:
+    def render():
         uploaded = request.files.get("ontology_file")
         if uploaded is None or not uploaded.filename:
             return _render_home(error="Please select an ontology file before rendering.")
@@ -122,8 +136,7 @@ def create_app(*, storage_dir: Path) -> Flask:
         renders[render_id] = result
         _prune_old_renders()
 
-        state = {"max_depth": str(max_depth), "rdf_format": rdf_format or "", "label_mode": label_mode}
-        return _render_home(result=result, state=state)
+        return redirect(url_for("home", render_id=render_id))
 
     @app.get("/graph/<render_id>")
     def graph(render_id: str):
@@ -239,6 +252,19 @@ HOME_TEMPLATE = """
       padding: 10px 12px;
       margin-top: 10px;
     }
+    .info {
+      background: #e0f2fe;
+      color: #0c4a6e;
+      border: 1px solid #7dd3fc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 12px;
+    }
+    .hint {
+      margin-top: 8px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -309,6 +335,17 @@ HOME_TEMPLATE = """
 
       {% if error %}
         <div class="error">{{ error }}</div>
+      {% endif %}
+      {% if result %}
+        <div class="info">
+          <b>Current render:</b> {{ result.source_name }}.
+          Choose a new file if you want to replace it.
+        </div>
+        <div class="actions">
+          <a href="{{ url_for('home') }}">Clear current render</a>
+        </div>
+      {% else %}
+        <div class="hint">No file stays selected after rendering. Pick a file again to create a new render.</div>
       {% endif %}
     </section>
 

@@ -30,7 +30,7 @@ Many ontology graph tools are hard to use or no longer maintained. OntoViewer ai
 ### Local development install
 
 ```bash
-git clone https://github.com/<your-username>/ontoviewer.git
+git clone https://github.com/ylgrst/ontoviewer.git
 cd ontoviewer
 python -m venv .venv
 source .venv/bin/activate
@@ -98,6 +98,7 @@ Web UI features:
 - Configure import recursion depth.
 - Set optional RDF format.
 - Choose default label mode (`human` or `raw`).
+- Reload-safe result pages with a visible current-render status.
 - Preview the generated graph inline.
 - Download the generated HTML graph.
 
