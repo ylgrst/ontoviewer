@@ -635,8 +635,7 @@ html, body {{
   <button id="ontoviewer-tree-view-btn" onclick="window.ontoviewerSetViewMode('tree')">Family tree view</button>
   <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
-  <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
-  <button onclick="window.ontoviewerExpandAll()">Expand all</button>
+  <button id="ontoviewer-collapse-toggle" onclick="window.ontoviewerToggleCollapseAll()">Collapse by ontology</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
   <hr />
   <div class="ontoviewer-legend-title">Legend</div>
@@ -717,6 +716,12 @@ html, body {{
     return attached ? "Detach ontology nodes" : "Attach ontology nodes";
   }}
 
+  function collapseToggleText() {{
+    return clusterIds.size > 0 || collapsedClassNodes.size > 0
+      ? "Expand all"
+      : "Collapse by ontology";
+  }}
+
   function viewModeButtonState(mode) {{
     const graphBtn = document.getElementById("ontoviewer-graph-view-btn");
     const treeBtn = document.getElementById("ontoviewer-tree-view-btn");
@@ -725,6 +730,13 @@ html, body {{
     }}
     if (treeBtn) {{
       treeBtn.disabled = mode === "tree";
+    }}
+  }}
+
+  function refreshCollapseToggle() {{
+    const collapseBtn = document.getElementById("ontoviewer-collapse-toggle");
+    if (collapseBtn) {{
+      collapseBtn.textContent = collapseToggleText();
     }}
   }}
 
@@ -761,6 +773,7 @@ html, body {{
       }}
     }});
     clusterIds.add(clusterId);
+    refreshCollapseToggle();
   }}
 
   function subclassChildrenMap() {{
@@ -928,13 +941,14 @@ html, body {{
     }}
   }}
 
-  window.ontoviewerCollapseByOntology = function() {{
+  function collapseAllByOntology() {{
     Object.entries(groupLabels).forEach(([groupId, label]) => {{
       collapseGroup(groupId, label);
     }});
-  }};
+    refreshCollapseToggle();
+  }}
 
-  window.ontoviewerExpandAll = function() {{
+  function expandAll() {{
     Array.from(clusterIds).forEach((clusterId) => {{
       if (network.isCluster(clusterId)) {{
         network.openCluster(clusterId);
@@ -943,6 +957,15 @@ html, body {{
     clusterIds.clear();
     collapsedClassNodes.clear();
     applyLabelMode(labelMode);
+    refreshCollapseToggle();
+  }}
+
+  window.ontoviewerToggleCollapseAll = function() {{
+    if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+      expandAll();
+    }} else {{
+      collapseAllByOntology();
+    }}
   }};
 
   window.ontoviewerToggleLabels = function() {{
@@ -970,6 +993,7 @@ html, body {{
       network.openCluster(nodeId);
       clusterIds.delete(nodeId);
       applyLabelMode(labelMode);
+      refreshCollapseToggle();
       return;
     }}
 
@@ -987,10 +1011,12 @@ html, body {{
       collapsedClassNodes.add(nodeId);
     }}
     applyLabelMode(labelMode);
+    refreshCollapseToggle();
   }});
 
   applyViewMode("graph");
   applyLabelMode(labelMode);
+  refreshCollapseToggle();
 }})();
 </script>
 """
