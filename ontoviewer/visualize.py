@@ -180,6 +180,14 @@ def render_interactive_graph(
                         )
                     )
 
+    subclass_pairs = {
+        (src, dst)
+        for src, dst, _, _, edge_type in relation_edges
+        if edge_type == "subclass" and src in class_nodes and dst in class_nodes
+    }
+    direct_subclasses = {src for src, _ in subclass_pairs}
+    root_classes = class_nodes - direct_subclasses
+
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
         color = ontology_color.get(owner, "#9ca3af")
@@ -202,7 +210,7 @@ def render_interactive_graph(
             ontologyGroup=ontology_group_id,
             ontologyIri=owner,
         )
-        if owner:
+        if owner and cls in root_classes:
             net.add_edge(
                 f"ont:{owner}",
                 cls,
@@ -211,7 +219,16 @@ def render_interactive_graph(
                 width=1,
                 title="defined in ontology",
                 edgeType="ontology-membership",
+                physics=False,
                 hidden=True,
+            )
+            net.add_edge(
+                f"ont:{owner}",
+                cls,
+                edgeType="layout-root",
+                hidden=True,
+                physics=True,
+                length=240,
             )
 
     rendered_relations = 0
@@ -225,6 +242,15 @@ def render_interactive_graph(
                     color="#2563eb",
                     width=1.6,
                     edgeType=edge_type,
+                    physics=False,
+                )
+                net.add_edge(
+                    src,
+                    dst,
+                    edgeType="layout-subclass",
+                    hidden=True,
+                    physics=True,
+                    length=120,
                 )
             else:
                 display_label = human_label if label_mode == "human" else raw_label
@@ -238,6 +264,7 @@ def render_interactive_graph(
                     edgeType=edge_type,
                     humanLabel=human_label,
                     rawLabel=raw_label,
+                    physics=False,
                 )
             rendered_relations += 1
 
@@ -250,6 +277,7 @@ def render_interactive_graph(
             dashes=True,
             width=2.4,
             edgeType="imports",
+            physics=False,
             hidden=True,
         )
 
@@ -641,8 +669,18 @@ html, body {{
       const suffix = collapsedCount > 0 ? " (+" + collapsedCount + ")" : "";
       const nextLabel = baseLabel + suffix;
       const nextHidden = hiddenIds.has(node.id);
-      if (nextLabel !== node.label || nextHidden !== Boolean(node.hidden)) {{
-        nodeUpdates.push({{ id: node.id, label: nextLabel, hidden: nextHidden }});
+      const nextPhysics = !nextHidden;
+      if (
+        nextLabel !== node.label ||
+        nextHidden !== Boolean(node.hidden) ||
+        nextPhysics !== Boolean(node.physics)
+      ) {{
+        nodeUpdates.push({{
+          id: node.id,
+          label: nextLabel,
+          hidden: nextHidden,
+          physics: nextPhysics
+        }});
       }}
     }});
     if (nodeUpdates.length > 0) {{
@@ -688,7 +726,9 @@ html, body {{
     const edgeUpdates = [];
     edgesDs.forEach((edge) => {{
       let nextHidden = false;
-      if (edge.edgeType === "imports") {{
+      if (edge.edgeType === "layout-root" || edge.edgeType === "layout-subclass") {{
+        nextHidden = true;
+      }} else if (edge.edgeType === "imports") {{
         nextHidden = !ontologyAttached;
       }} else if (edge.edgeType === "ontology-membership") {{
         nextHidden = !ontologyAttached || hiddenIds.has(edge.to);

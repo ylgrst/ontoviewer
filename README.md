@@ -27,7 +27,29 @@ Many ontology graph tools are hard to use or no longer maintained. OntoViewer ai
 ### Prerequisites
 - Python 3.10+
 
-### Local development install
+### End-user install
+
+For command-line usage only:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install "git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+For command-line usage plus the local web UI:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+### Development install
+
+If you want to work on the codebase itself:
 
 ```bash
 git clone https://github.com/ylgrst/ontoviewer.git
@@ -38,13 +60,13 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-For development (tests):
+Add development test dependencies:
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-For local web UI:
+Add local web UI dependencies:
 
 ```bash
 pip install -e ".[web]"
@@ -74,7 +96,7 @@ In the graph UI:
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore both ontology clusters and folded subclass trees.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
-- Click a class node to collapse/expand only its direct subclasses.
+- Click a class node to fold/unfold its whole descendant subclass tree into that class.
 - Use the built-in legend to understand node and edge types.
 
 Edge conventions:
@@ -82,6 +104,10 @@ Edge conventions:
 - `property relation`: solid dark arrow, labeled with property name.
 - `imports`: dashed orange arrow between ontology nodes.
 - `ontology membership`: dashed gray arrow from ontology node to class node (visible when ontology nodes are attached).
+
+Layout behavior:
+- Root classes are attracted toward their ontology anchor.
+- Subclasses are arranged around their direct parent class rather than the ontology center.
 
 ### Local Web UI
 
