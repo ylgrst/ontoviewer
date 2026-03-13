@@ -186,11 +186,16 @@ def render_interactive_graph(
     }
     direct_subclasses = {src for src, _ in subclass_pairs}
     root_classes = class_nodes - direct_subclasses
+    ontology_branch_span = _compute_ontology_branch_spans(
+        ontology_ids=ontology_ids,
+        class_nodes=class_nodes,
+        subclass_pairs=subclass_pairs,
+        class_owner=class_owner,
+    )
     ontology_level = _compute_ontology_levels(
         ontology_ids=ontology_ids,
-        root_iri=closure.root_iri,
         canonical_import_edges=canonical_import_edges,
-        documents=closure.documents,
+        ontology_branch_span=ontology_branch_span,
     )
     class_level = _compute_class_levels(
         class_nodes=class_nodes,
@@ -198,6 +203,30 @@ def render_interactive_graph(
         class_owner=class_owner,
         ontology_level=ontology_level,
     )
+    root_classes_by_owner: Dict[str, Set[str]] = {}
+    for cls in root_classes:
+        owner = class_owner.get(cls)
+        if owner:
+            root_classes_by_owner.setdefault(owner, set()).add(cls)
+
+    for iri, owned_roots in root_classes_by_owner.items():
+        anchor_id = f"treeclass:{iri}"
+        net.add_node(
+            anchor_id,
+            label="",
+            hidden=True,
+            physics=False,
+            level=ontology_level.get(iri, 0) + 1,
+            isTreeHelperNode=True,
+            ontologyIri=iri,
+        )
+        net.add_edge(
+            f"ont:{iri}",
+            anchor_id,
+            edgeType="tree-class-branch",
+            hidden=True,
+            physics=False,
+        )
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
@@ -243,6 +272,8 @@ def render_interactive_graph(
                 f"ont:{owner}",
                 cls,
                 edgeType="layout-root",
+                treeFrom=f"treeclass:{owner}",
+                treeTo=cls,
                 hidden=True,
                 physics=True,
                 length=240,
@@ -406,12 +437,53 @@ def _iri_matches_ontology(entity_iri: str, ontology_iri: str) -> bool:
     return False
 
 
+def _compute_ontology_branch_spans(
+    *,
+    ontology_ids: list[str],
+    class_nodes: Set[str],
+    subclass_pairs: Set[Tuple[str, str]],
+    class_owner: Dict[str, str],
+) -> Dict[str, int]:
+    parents: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
+    children: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
+
+    for child, parent in subclass_pairs:
+        if class_owner.get(child) != class_owner.get(parent):
+            continue
+        parents.setdefault(child, set()).add(parent)
+        children.setdefault(parent, set()).add(child)
+
+    branch_spans: Dict[str, int] = {}
+    for ontology_iri in ontology_ids:
+        owned_classes = {cls for cls in class_nodes if class_owner.get(cls) == ontology_iri}
+        if not owned_classes:
+            branch_spans[ontology_iri] = 2
+            continue
+
+        roots = [cls for cls in owned_classes if not (parents.get(cls, set()) & owned_classes)]
+        queue: deque[Tuple[str, int]] = deque((cls, 0) for cls in roots or owned_classes)
+        seen_depths: Dict[str, int] = {}
+
+        while queue:
+            current, depth = queue.popleft()
+            if current in seen_depths and depth >= seen_depths[current]:
+                continue
+            seen_depths[current] = depth
+            for child in children.get(current, set()):
+                if child in owned_classes:
+                    queue.append((child, depth + 1))
+
+        max_depth = max(seen_depths.values(), default=0)
+        branch_spans[ontology_iri] = max(2, 2 + max_depth)
+
+    return branch_spans
+
+
 def _compute_ontology_levels(
     *,
     ontology_ids: list[str],
-    root_iri: str,
     canonical_import_edges: Set[Tuple[str, str]],
-    documents: Dict[str, object],
+    ontology_branch_span: Dict[str, int],
 ) -> Dict[str, int]:
     depths: Dict[str, int] = {}
     children: Dict[str, list[str]] = {}
@@ -429,30 +501,28 @@ def _compute_ontology_levels(
             depths[iri] = 0
             queue.append(iri)
 
-    if not queue and root_iri:
-        depths[root_iri] = 0
-        queue.append(root_iri)
+    if not queue and ontology_ids:
+        first_iri = ontology_ids[0]
+        depths[first_iri] = 0
+        queue.append(first_iri)
 
     while queue:
         current = queue.popleft()
         current_depth = depths.get(current, 0)
         for child in children.get(current, []):
-            next_depth = current_depth + 1
-            if child not in depths or next_depth < depths[child]:
+            next_depth = current_depth + ontology_branch_span.get(current, 2) + 1
+            if child not in depths or next_depth > depths[child]:
                 depths[child] = next_depth
                 queue.append(child)
 
     if len(depths) < len(ontology_ids):
-        max_document_depth = max((getattr(doc, "depth", 0) for doc in documents.values()), default=0)
         max_known_depth = max(depths.values(), default=0)
         for iri in ontology_ids:
             if iri in depths:
                 continue
-            doc = documents.get(iri)
-            guessed_depth = getattr(doc, "depth", 0) if doc is not None else 0
-            depths[iri] = max_known_depth + max(max_document_depth - guessed_depth, 0)
+            depths[iri] = max_known_depth + ontology_branch_span.get(iri, 2) + 1
 
-    return {iri: depths.get(iri, 0) * 4 for iri in ontology_ids}
+    return {iri: depths.get(iri, 0) for iri in ontology_ids}
 
 
 def _compute_class_levels(
@@ -475,7 +545,7 @@ def _compute_class_levels(
 
     for cls in roots:
         owner = class_owner.get(cls)
-        levels[cls] = ontology_level.get(owner, 0) + 1
+        levels[cls] = ontology_level.get(owner, 0) + 2
         queue.append(cls)
 
     while queue:
@@ -490,7 +560,7 @@ def _compute_class_levels(
     for cls in class_nodes:
         if cls not in levels:
             owner = class_owner.get(cls)
-            levels[cls] = ontology_level.get(owner, 0) + 1
+            levels[cls] = ontology_level.get(owner, 0) + 2
 
     return levels
 
@@ -718,9 +788,9 @@ html, body {{
         direction: "UD",
         sortMethod: "directed",
         shakeTowards: "roots",
-        levelSeparation: 130,
-        nodeSpacing: 150,
-        treeSpacing: 180,
+        levelSeparation: 145,
+        nodeSpacing: 210,
+        treeSpacing: 240,
         blockShifting: true,
         edgeMinimization: true,
         parentCentralization: true
@@ -750,6 +820,35 @@ html, body {{
     return clusterIds.size > 0 || collapsedClassNodes.size > 0
       ? "Expand all"
       : "Collapse by ontology";
+  }}
+
+  function wrapTreeLabel(text, maxChars) {{
+    if (!text || text.length <= maxChars) {{
+      return text;
+    }}
+    const words = text.split(/\\s+/).filter(Boolean);
+    if (words.length <= 1) {{
+      const chunks = [];
+      for (let i = 0; i < text.length; i += maxChars) {{
+        chunks.push(text.slice(i, i + maxChars));
+      }}
+      return chunks.join("\\n");
+    }}
+    const lines = [];
+    let currentLine = "";
+    words.forEach((word) => {{
+      const candidate = currentLine ? currentLine + " " + word : word;
+      if (candidate.length > maxChars && currentLine) {{
+        lines.push(currentLine);
+        currentLine = word;
+      }} else {{
+        currentLine = candidate;
+      }}
+    }});
+    if (currentLine) {{
+      lines.push(currentLine);
+    }}
+    return lines.join("\\n");
   }}
 
   function viewModeButtonState(mode) {{
@@ -959,9 +1058,12 @@ html, body {{
       if (!node.isClassNode) {{
         return;
       }}
-      const baseLabel = nodeBaseLabel(node, mode);
+      const plainLabel = nodeBaseLabel(node, mode);
+      const baseLabel = viewMode === "tree" ? wrapTreeLabel(plainLabel, 18) : plainLabel;
       const collapsedCount = collapsedClassNodes.has(node.id) ? collapsedDescendantCount(node.id) : 0;
-      const suffix = collapsedCount > 0 ? " (+" + collapsedCount + ")" : "";
+      const suffix = collapsedCount > 0
+        ? (viewMode === "tree" ? "\\n(+" + collapsedCount + ")" : " (+" + collapsedCount + ")")
+        : "";
       const nextLabel = baseLabel + suffix;
       const nextHidden = hiddenIds.has(node.id);
       const nextPhysics = !nextHidden;
@@ -1044,10 +1146,12 @@ html, body {{
       let nextHidden = false;
       if (edge.edgeType === "layout-root" || edge.edgeType === "layout-subclass") {{
         nextHidden = true;
+      }} else if (edge.edgeType === "tree-class-branch") {{
+        nextHidden = true;
       }} else if (edge.edgeType === "imports") {{
         nextHidden = !ontologyAttached;
       }} else if (edge.edgeType === "ontology-membership") {{
-        nextHidden = !ontologyAttached || hiddenIds.has(edge.to);
+        nextHidden = viewMode === "tree" || !ontologyAttached || hiddenIds.has(edge.to);
       }} else {{
         nextHidden = hiddenIds.has(edge.from) || hiddenIds.has(edge.to);
       }}

@@ -50,8 +50,9 @@ ex:ChildClass a owl:Class ;
     assert "Family tree view" in html
     assert "ontoviewerSetViewMode('tree')" in html
     assert "ontoviewerToggleCollapseAll()" in html
-    assert "levelSeparation: 130" in html
+    assert "levelSeparation: 145" in html
     assert 'direction: "UD"' in html
     assert 'type: "vertical"' in html
     assert "treeFrom" in html
+    assert "treeclass:" in html
     assert "imports" in html
