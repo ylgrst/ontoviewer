@@ -8,6 +8,7 @@ Current MVP includes:
 - Extract classes and class-to-class relations.
 - Optionally attach classes to ontology anchor nodes.
 - Render an interactive HTML graph with zoom/pan controls.
+- Switch live between force-directed graph view and family-tree view.
 - Color nodes by originating ontology.
 - Collapse/expand ontology groups interactively.
 - Show ontology import links as dashed edges labeled `imports`.
@@ -92,6 +93,7 @@ The CLI summary includes loaded ontologies, total ontology references, and unres
 In the graph UI:
 - Use mouse wheel / trackpad to zoom.
 - Drag background to pan.
+- Use **Graph view / Family tree view** to switch layouts in the same rendered page.
 - Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
 - Use **Collapse by ontology** to reduce visual complexity.
 - Use **Expand all** to restore both ontology clusters and folded subclass trees.
@@ -108,6 +110,7 @@ Edge conventions:
 Layout behavior:
 - Root classes are attracted toward their ontology anchor.
 - Subclasses are arranged around their direct parent class rather than the ontology center.
+- In family-tree view, classes are arranged by hierarchy level so daughter classes descend from their mother class.
 
 ### Local Web UI
 

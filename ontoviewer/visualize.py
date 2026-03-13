@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import json
 from html import escape
@@ -122,6 +123,7 @@ def render_interactive_graph(
             ontologyGroup=ontology_group.get(iri, "unknown"),
             ontologyIri=iri,
             isOntologyNode=True,
+            level=0,
         )
 
     class_nodes: Set[str] = set()
@@ -184,6 +186,18 @@ def render_interactive_graph(
     }
     direct_subclasses = {src for src, _ in subclass_pairs}
     root_classes = class_nodes - direct_subclasses
+    ontology_level = _compute_ontology_levels(
+        ontology_ids=ontology_ids,
+        root_iri=closure.root_iri,
+        canonical_import_edges=canonical_import_edges,
+        documents=closure.documents,
+    )
+    class_level = _compute_class_levels(
+        class_nodes=class_nodes,
+        subclass_pairs=subclass_pairs,
+        class_owner=class_owner,
+        ontology_level=ontology_level,
+    )
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
@@ -206,6 +220,7 @@ def render_interactive_graph(
             rawLabel=raw_display,
             ontologyGroup=ontology_group_id,
             ontologyIri=owner,
+            level=class_level.get(cls, 1),
         )
         if owner and cls in root_classes:
             net.add_edge(
@@ -277,6 +292,11 @@ def render_interactive_graph(
             physics=False,
             hidden=True,
         )
+
+    for iri in ontology_ids:
+        node = net.get_node(f"ont:{iri}")
+        if node is not None:
+            node["level"] = ontology_level.get(iri, 0)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     net.write_html(str(output_path))
@@ -369,6 +389,86 @@ def _iri_matches_ontology(entity_iri: str, ontology_iri: str) -> bool:
     return False
 
 
+def _compute_ontology_levels(
+    *,
+    ontology_ids: list[str],
+    root_iri: str,
+    canonical_import_edges: Set[Tuple[str, str]],
+    documents: Dict[str, object],
+) -> Dict[str, int]:
+    depths: Dict[str, int] = {}
+    children: Dict[str, list[str]] = {}
+    indegree: Dict[str, int] = {iri: 0 for iri in ontology_ids}
+
+    for source_iri, target_iri in canonical_import_edges:
+        children.setdefault(source_iri, []).append(target_iri)
+        indegree[target_iri] = indegree.get(target_iri, 0) + 1
+        indegree.setdefault(source_iri, 0)
+
+    queue: deque[str] = deque()
+    if root_iri:
+        depths[root_iri] = 0
+        queue.append(root_iri)
+
+    for iri in ontology_ids:
+        if indegree.get(iri, 0) == 0 and iri not in depths:
+            doc = documents.get(iri)
+            guessed_depth = getattr(doc, "depth", 0) if doc is not None else 0
+            depths[iri] = guessed_depth
+            queue.append(iri)
+
+    while queue:
+        current = queue.popleft()
+        current_depth = depths.get(current, 0)
+        for child in children.get(current, []):
+            next_depth = current_depth + 1
+            if child not in depths or next_depth < depths[child]:
+                depths[child] = next_depth
+                queue.append(child)
+
+    return {iri: depths.get(iri, 0) * 4 for iri in ontology_ids}
+
+
+def _compute_class_levels(
+    *,
+    class_nodes: Set[str],
+    subclass_pairs: Set[Tuple[str, str]],
+    class_owner: Dict[str, str],
+    ontology_level: Dict[str, int],
+) -> Dict[str, int]:
+    parents: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
+    children: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
+    levels: Dict[str, int] = {}
+
+    for child, parent in subclass_pairs:
+        parents.setdefault(child, set()).add(parent)
+        children.setdefault(parent, set()).add(child)
+
+    roots = [cls for cls in class_nodes if not parents.get(cls)]
+    queue: deque[str] = deque()
+
+    for cls in roots:
+        owner = class_owner.get(cls)
+        levels[cls] = ontology_level.get(owner, 0) + 1
+        queue.append(cls)
+
+    while queue:
+        parent = queue.popleft()
+        parent_level = levels.get(parent, 1)
+        for child in children.get(parent, set()):
+            next_level = parent_level + 1
+            if child not in levels or next_level < levels[child]:
+                levels[child] = next_level
+                queue.append(child)
+
+    for cls in class_nodes:
+        if cls not in levels:
+            owner = class_owner.get(cls)
+            levels[cls] = ontology_level.get(owner, 0) + 1
+
+    return levels
+
+
 def _inject_cluster_controls(
     output_path: Path,
     group_labels: Dict[str, str],
@@ -435,6 +535,10 @@ html, body {{
   border-radius: 6px;
   cursor: pointer;
   background: #f8fafc;
+}}
+.ontoviewer-controls button[disabled] {{
+  opacity: 0.6;
+  cursor: default;
 }}
 .ontoviewer-controls hr {{
   border: 0;
@@ -527,6 +631,9 @@ html, body {{
 }}
 </style>
 <div class="ontoviewer-controls">
+  <button id="ontoviewer-graph-view-btn" onclick="window.ontoviewerSetViewMode('graph')">Graph view</button>
+  <button id="ontoviewer-tree-view-btn" onclick="window.ontoviewerSetViewMode('tree')">Family tree view</button>
+  <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button onclick="window.ontoviewerCollapseByOntology()">Collapse by ontology</button>
   <button onclick="window.ontoviewerExpandAll()">Expand all</button>
@@ -554,7 +661,53 @@ html, body {{
   const clusterIds = new Set();
   const collapsedClassNodes = new Set();
   let labelMode = {json.dumps(initial_label_mode)};
+  let viewMode = "graph";
+  let graphOntologyAttached = false;
   let ontologyAttached = false;
+  const graphViewOptions = {{
+    layout: {{
+      hierarchical: false,
+      improvedLayout: true
+    }},
+    physics: {{
+      enabled: true,
+      solver: "barnesHut",
+      barnesHut: {{
+        gravitationalConstant: -8000,
+        springLength: 190,
+        springConstant: 0.02,
+        damping: 0.28
+      }},
+      stabilization: {{
+        iterations: 300
+      }}
+    }},
+    edges: {{
+      smooth: false
+    }}
+  }};
+  const treeViewOptions = {{
+    layout: {{
+      hierarchical: {{
+        enabled: true,
+        direction: "UD",
+        sortMethod: "directed",
+        shakeTowards: "roots",
+        levelSeparation: 130,
+        nodeSpacing: 150,
+        treeSpacing: 180,
+        blockShifting: true,
+        edgeMinimization: true,
+        parentCentralization: true
+      }}
+    }},
+    physics: {{
+      enabled: false
+    }},
+    edges: {{
+      smooth: false
+    }}
+  }};
 
   function labelModeText(mode) {{
     return mode === "human" ? "Show raw labels" : "Show human labels";
@@ -562,6 +715,17 @@ html, body {{
 
   function attachmentModeText(attached) {{
     return attached ? "Detach ontology nodes" : "Attach ontology nodes";
+  }}
+
+  function viewModeButtonState(mode) {{
+    const graphBtn = document.getElementById("ontoviewer-graph-view-btn");
+    const treeBtn = document.getElementById("ontoviewer-tree-view-btn");
+    if (graphBtn) {{
+      graphBtn.disabled = mode === "graph";
+    }}
+    if (treeBtn) {{
+      treeBtn.disabled = mode === "tree";
+    }}
   }}
 
   function clusterIdFromGroup(groupId) {{
@@ -712,9 +876,24 @@ html, body {{
     const attachBtn = document.getElementById("ontoviewer-attach-toggle");
     if (attachBtn) {{
       attachBtn.textContent = attachmentModeText(attached);
+      attachBtn.disabled = viewMode === "tree";
     }}
 
     refreshEdgeVisibility();
+  }}
+
+  function applyViewMode(mode) {{
+    viewMode = mode;
+    if (mode === "tree") {{
+      network.setOptions(treeViewOptions);
+      applyOntologyAttachment(true);
+      network.fit({{ animation: true }});
+    }} else {{
+      network.setOptions(graphViewOptions);
+      applyOntologyAttachment(graphOntologyAttached);
+      network.stabilize(200);
+    }}
+    viewModeButtonState(mode);
   }}
 
   function refreshEdgeVisibility() {{
@@ -771,7 +950,14 @@ html, body {{
   }};
 
   window.ontoviewerToggleAttachment = function() {{
-    applyOntologyAttachment(!ontologyAttached);
+    graphOntologyAttached = !graphOntologyAttached;
+    if (viewMode === "graph") {{
+      applyOntologyAttachment(graphOntologyAttached);
+    }}
+  }};
+
+  window.ontoviewerSetViewMode = function(mode) {{
+    applyViewMode(mode);
   }};
 
   network.on("click", function(params) {{
@@ -803,7 +989,7 @@ html, body {{
     applyLabelMode(labelMode);
   }});
 
-  applyOntologyAttachment(false);
+  applyViewMode("graph");
   applyLabelMode(labelMode);
 }})();
 </script>
