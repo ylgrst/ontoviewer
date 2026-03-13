@@ -215,6 +215,7 @@ def render_interactive_graph(
             color=color,
             shape="dot",
             size=16,
+            borderWidth=1,
             isClassNode=True,
             humanLabel=human_display,
             rawLabel=raw_display,
@@ -231,6 +232,10 @@ def render_interactive_graph(
                 width=1,
                 title="defined in ontology",
                 edgeType="ontology-membership",
+                semanticFrom=f"ont:{owner}",
+                semanticTo=cls,
+                treeFrom=f"ont:{owner}",
+                treeTo=cls,
                 physics=False,
                 hidden=True,
             )
@@ -254,6 +259,10 @@ def render_interactive_graph(
                     color="#2563eb",
                     width=1.6,
                     edgeType=edge_type,
+                    semanticFrom=src,
+                    semanticTo=dst,
+                    treeFrom=dst,
+                    treeTo=src,
                     physics=False,
                 )
                 net.add_edge(
@@ -276,6 +285,10 @@ def render_interactive_graph(
                     edgeType=edge_type,
                     humanLabel=human_label,
                     rawLabel=raw_label,
+                    semanticFrom=src,
+                    semanticTo=dst,
+                    treeFrom=src,
+                    treeTo=dst,
                     physics=False,
                 )
             rendered_relations += 1
@@ -289,6 +302,10 @@ def render_interactive_graph(
             dashes=True,
             width=2.4,
             edgeType="imports",
+            semanticFrom=f"ont:{source_iri}",
+            semanticTo=f"ont:{target_iri}",
+            treeFrom=f"ont:{target_iri}",
+            treeTo=f"ont:{source_iri}",
             physics=False,
             hidden=True,
         )
@@ -400,22 +417,21 @@ def _compute_ontology_levels(
     children: Dict[str, list[str]] = {}
     indegree: Dict[str, int] = {iri: 0 for iri in ontology_ids}
 
-    for source_iri, target_iri in canonical_import_edges:
-        children.setdefault(source_iri, []).append(target_iri)
-        indegree[target_iri] = indegree.get(target_iri, 0) + 1
-        indegree.setdefault(source_iri, 0)
+    # In family-tree mode, imported ontologies sit above the ontologies that import them.
+    for importer_iri, imported_iri in canonical_import_edges:
+        children.setdefault(imported_iri, []).append(importer_iri)
+        indegree[importer_iri] = indegree.get(importer_iri, 0) + 1
+        indegree.setdefault(imported_iri, 0)
 
     queue: deque[str] = deque()
-    if root_iri:
+    for iri in ontology_ids:
+        if indegree.get(iri, 0) == 0:
+            depths[iri] = 0
+            queue.append(iri)
+
+    if not queue and root_iri:
         depths[root_iri] = 0
         queue.append(root_iri)
-
-    for iri in ontology_ids:
-        if indegree.get(iri, 0) == 0 and iri not in depths:
-            doc = documents.get(iri)
-            guessed_depth = getattr(doc, "depth", 0) if doc is not None else 0
-            depths[iri] = guessed_depth
-            queue.append(iri)
 
     while queue:
         current = queue.popleft()
@@ -425,6 +441,16 @@ def _compute_ontology_levels(
             if child not in depths or next_depth < depths[child]:
                 depths[child] = next_depth
                 queue.append(child)
+
+    if len(depths) < len(ontology_ids):
+        max_document_depth = max((getattr(doc, "depth", 0) for doc in documents.values()), default=0)
+        max_known_depth = max(depths.values(), default=0)
+        for iri in ontology_ids:
+            if iri in depths:
+                continue
+            doc = documents.get(iri)
+            guessed_depth = getattr(doc, "depth", 0) if doc is not None else 0
+            depths[iri] = max_known_depth + max(max_document_depth - guessed_depth, 0)
 
     return {iri: depths.get(iri, 0) * 4 for iri in ontology_ids}
 
@@ -640,7 +666,7 @@ html, body {{
   <hr />
   <div class="ontoviewer-legend-title">Legend</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-node-box"></span> Ontology node</div>
-  <div class="ontoviewer-legend-row"><span class="ontoviewer-node-dot"></span> Class node (colored by ontology)</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-node-dot"></span> Class node (dot in graph view, box in family-tree view)</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
@@ -704,7 +730,11 @@ html, body {{
       enabled: false
     }},
     edges: {{
-      smooth: false
+      smooth: {{
+        enabled: true,
+        type: "vertical",
+        roundness: 0
+      }}
     }}
   }};
 
@@ -742,6 +772,95 @@ html, body {{
 
   function clusterIdFromGroup(groupId) {{
     return "cluster:" + groupId;
+  }}
+
+  function applyNodeStyle(mode) {{
+    const nodesDs = network.body.data.nodes;
+    const nodeUpdates = [];
+    nodesDs.forEach((node) => {{
+      if (node.isClassNode) {{
+        if (mode === "tree") {{
+          nodeUpdates.push({{
+            id: node.id,
+            shape: "box",
+            size: 24,
+            margin: 10,
+            borderWidth: 1.5,
+            widthConstraint: {{ maximum: 220 }},
+            font: {{
+              color: "#111827",
+              strokeWidth: 0
+            }}
+          }});
+        }} else {{
+          nodeUpdates.push({{
+            id: node.id,
+            shape: "dot",
+            size: 16,
+            margin: 0,
+            borderWidth: 1,
+            widthConstraint: false,
+            font: {{
+              size: 14,
+              color: "#111827",
+              strokeWidth: 4,
+              strokeColor: "#f3f4f6"
+            }}
+          }});
+        }}
+      }} else if (node.isOntologyNode) {{
+        if (mode === "tree") {{
+          nodeUpdates.push({{
+            id: node.id,
+            shape: "box",
+            margin: 12,
+            widthConstraint: {{ maximum: 240 }},
+            font: {{
+              size: 14,
+              color: "#111827",
+              strokeWidth: 0
+            }}
+          }});
+        }} else {{
+          nodeUpdates.push({{
+            id: node.id,
+            shape: "box",
+            margin: 8,
+            widthConstraint: false,
+            font: {{
+              color: "#111827",
+              strokeWidth: 0
+            }}
+          }});
+        }}
+      }}
+    }});
+    if (nodeUpdates.length > 0) {{
+      nodesDs.update(nodeUpdates);
+    }}
+  }}
+
+  function applyEdgeOrientation(mode) {{
+    const edgesDs = network.body.data.edges;
+    const edgeUpdates = [];
+    edgesDs.forEach((edge) => {{
+      const nextFrom = mode === "tree"
+        ? (edge.treeFrom || edge.semanticFrom || edge.from)
+        : (edge.semanticFrom || edge.from);
+      const nextTo = mode === "tree"
+        ? (edge.treeTo || edge.semanticTo || edge.to)
+        : (edge.semanticTo || edge.to);
+      if (edge.from !== nextFrom || edge.to !== nextTo) {{
+        edgeUpdates.push({{
+          id: edge.id,
+          from: nextFrom,
+          to: nextTo
+        }});
+      }}
+    }});
+    if (edgeUpdates.length > 0) {{
+      edgesDs.update(edgeUpdates);
+    }}
   }}
 
   function collapseGroup(groupId, label) {{
@@ -782,10 +901,12 @@ html, body {{
       if (edge.edgeType !== "subclass") {{
         return;
       }}
-      if (!childrenByParent.has(edge.to)) {{
-        childrenByParent.set(edge.to, []);
+      const childId = edge.semanticFrom || edge.from;
+      const parentId = edge.semanticTo || edge.to;
+      if (!childrenByParent.has(parentId)) {{
+        childrenByParent.set(parentId, []);
       }}
-      childrenByParent.get(edge.to).push(edge.from);
+      childrenByParent.get(parentId).push(childId);
     }});
     return childrenByParent;
   }}
@@ -899,11 +1020,17 @@ html, body {{
     viewMode = mode;
     if (mode === "tree") {{
       network.setOptions(treeViewOptions);
+      applyEdgeOrientation("tree");
+      applyNodeStyle("tree");
       applyOntologyAttachment(true);
+      applyLabelMode(labelMode);
       network.fit({{ animation: true }});
     }} else {{
       network.setOptions(graphViewOptions);
+      applyEdgeOrientation("graph");
+      applyNodeStyle("graph");
       applyOntologyAttachment(graphOntologyAttached);
+      applyLabelMode(labelMode);
       network.stabilize(200);
     }}
     viewModeButtonState(mode);

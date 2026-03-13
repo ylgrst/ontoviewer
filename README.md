@@ -110,6 +110,8 @@ Layout behavior:
 - Root classes are attracted toward their ontology anchor.
 - Subclasses are arranged around their direct parent class rather than the ontology center.
 - In family-tree view, classes are arranged by hierarchy level so daughter classes descend from their mother class.
+- In family-tree view, imported ontologies sit above the ontologies that import them, so dependency chains flow downward.
+- In family-tree view, nodes are rendered as labeled boxes and edges use orthogonal routing for a more tree-like structure.
 
 ### Local Web UI
 
