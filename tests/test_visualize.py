@@ -64,6 +64,8 @@ ex:ChildClass a owl:Class ;
     assert "treeFrom" in html
     assert "wrapTreeLabel" in html
     assert "hideLoadingBar" in html
+    assert "refreshAfterClassToggle" in html
+    assert 'network.on("selectNode"' in html
     assert 'network.on("stabilized"' in html
     assert 'network.on("animationFinished"' in html
     assert "network.stopSimulation()" in html

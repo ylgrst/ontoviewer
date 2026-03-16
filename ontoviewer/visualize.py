@@ -1378,6 +1378,20 @@ html, body {{
     refreshOntologyLegendControls();
   }}
 
+  function refreshAfterClassToggle() {{
+    if (viewMode === "tree") {{
+      network.stopSimulation();
+      network.setOptions(treeViewOptions);
+      applyEdgeOrientation("tree");
+      applyNodeStyle("tree");
+      network.redraw();
+      network.fit({{ animation: true }});
+      scheduleLoadingBarHide(0);
+      return;
+    }}
+    network.stabilize(80);
+  }}
+
   function refreshEdgeVisibility() {{
     const edgesDs = network.body.data.edges;
     const hiddenIds = hiddenClassIds();
@@ -1512,12 +1526,7 @@ html, body {{
     }}
   }};
 
-  network.on("click", function(params) {{
-    if (!params.nodes || params.nodes.length === 0) {{
-      return;
-    }}
-    const nodeId = params.nodes[0];
-
+  function handleActivatedNode(nodeId) {{
     if (network.isCluster(nodeId)) {{
       const groupId = groupIdFromClusterId(nodeId);
       if (groupId) {{
@@ -1529,16 +1538,19 @@ html, body {{
         refreshOntologyLegendControls();
       }}
       applyLabelMode(labelMode);
-      return;
+      if (viewMode === "tree") {{
+        network.fit({{ animation: true }});
+      }}
+      return true;
     }}
 
     const node = network.body.data.nodes.get(nodeId);
     if (!node || !node.isClassNode) {{
-      return;
+      return false;
     }}
     const descendantCount = descendantClassIds(nodeId, subclassChildrenMap(), new Set()).length;
     if (descendantCount === 0) {{
-      return;
+      return false;
     }}
     if (collapsedClassNodes.has(nodeId)) {{
       collapsedClassNodes.delete(nodeId);
@@ -1547,6 +1559,18 @@ html, body {{
     }}
     applyLabelMode(labelMode);
     refreshCollapseToggle();
+    refreshAfterClassToggle();
+    return true;
+  }}
+
+  network.on("selectNode", function(params) {{
+    if (!params.nodes || params.nodes.length === 0) {{
+      return;
+    }}
+    const handled = handleActivatedNode(params.nodes[0]);
+    if (handled) {{
+      network.unselectAll();
+    }}
   }});
 
   network.on("stabilized", function() {{
