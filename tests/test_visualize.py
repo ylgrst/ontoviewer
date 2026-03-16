@@ -53,6 +53,13 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleCollapseAll()" in html
     assert "ontoviewerToggleTheme()" in html
     assert "ontoviewerToggleOntologyGroup(" in html
+    assert "Search nodes" in html
+    assert "ontoviewerUpdateSearch(this.value)" in html
+    assert "ontoviewerStepSearch(-1)" in html
+    assert "ontoviewerStepSearch(1)" in html
+    assert "searchMatches" in html
+    assert "scheduleCurrentSearchFocus" in html
+    assert "revealNodeForSearch" in html
     assert "collapsedOntologyGroups" in html
     assert "reapplyCollapsedOntologyGroups()" in html
     assert "isEmbeddedPreview()" in html

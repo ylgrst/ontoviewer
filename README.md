@@ -96,6 +96,7 @@ In the graph UI:
 - Drag background to pan.
 - Use **Graph view / Family tree view** to switch layouts in the same rendered page.
 - Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
+- Use the search bar to find node labels, then jump between matches with the left/right arrows.
 - Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
 - Use **Collapse by ontology / Expand all** as a single toggle for switching between ontology-level overview and fully expanded view.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.

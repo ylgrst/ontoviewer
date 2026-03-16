@@ -616,6 +616,37 @@ html, body {{
 .ontoviewer-controls button:not([disabled]):hover {{
   background: var(--ov-button-bg-active);
 }}
+.ontoviewer-search {{
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}}
+.ontoviewer-search-input {{
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ov-border-strong);
+  border-radius: 6px;
+  background: var(--ov-button-bg);
+  color: var(--ov-button-text);
+  font: inherit;
+}}
+.ontoviewer-search-input::placeholder {{
+  color: var(--ov-text-soft);
+}}
+.ontoviewer-search-row {{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}}
+.ontoviewer-search-row button {{
+  margin: 0;
+  min-width: 34px;
+  padding: 4px 8px;
+}}
+.ontoviewer-search-count {{
+  font-size: 12px;
+  color: var(--ov-text-soft);
+}}
 .ontoviewer-controls hr {{
   border: 0;
   border-top: 1px solid var(--ov-border);
@@ -737,6 +768,22 @@ html, body {{
   <button id="ontoviewer-tree-view-btn" onclick="window.ontoviewerSetViewMode('tree')">Family tree view</button>
   <button id="ontoviewer-theme-toggle" onclick="window.ontoviewerToggleTheme()">Dark mode</button>
   <hr />
+  <div class="ontoviewer-search">
+    <input
+      id="ontoviewer-search-input"
+      class="ontoviewer-search-input"
+      type="search"
+      placeholder="Search nodes"
+      oninput="window.ontoviewerUpdateSearch(this.value)"
+      onkeydown="window.ontoviewerHandleSearchKey(event)"
+    />
+    <div class="ontoviewer-search-row">
+      <button id="ontoviewer-search-prev" type="button" onclick="window.ontoviewerStepSearch(-1)" aria-label="Previous search result">&larr;</button>
+      <button id="ontoviewer-search-next" type="button" onclick="window.ontoviewerStepSearch(1)" aria-label="Next search result">&rarr;</button>
+      <span id="ontoviewer-search-count" class="ontoviewer-search-count">No search</span>
+    </div>
+  </div>
+  <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button id="ontoviewer-collapse-toggle" onclick="window.ontoviewerToggleCollapseAll()">Collapse by ontology</button>
   <button id="ontoviewer-property-toggle" onclick="window.ontoviewerToggleTreeRelations()">Show relation edges</button>
@@ -766,6 +813,10 @@ html, body {{
   const clusterIds = new Set();
   const collapsedOntologyGroups = new Set();
   const collapsedClassNodes = new Set();
+  let searchQuery = "";
+  let searchMatches = [];
+  let searchMatchIndex = -1;
+  let pendingSearchFocusNodeId = null;
   let labelMode = {json.dumps(initial_label_mode)};
   let viewMode = "graph";
   let graphOntologyAttached = false;
@@ -851,6 +902,16 @@ html, body {{
 
   function themeToggleText(mode) {{
     return mode === "dark" ? "Light mode" : "Dark mode";
+  }}
+
+  function searchCountText() {{
+    if (!searchQuery) {{
+      return "No search";
+    }}
+    if (searchMatches.length === 0 || searchMatchIndex < 0) {{
+      return "0 results";
+    }}
+    return (searchMatchIndex + 1) + " / " + searchMatches.length;
   }}
 
   function getInitialThemeMode() {{
@@ -942,6 +1003,16 @@ html, body {{
     window.setTimeout(hideLoadingBar, delayMs || 0);
   }}
 
+  function searchableNodeText(node) {{
+    return [
+      node.humanLabel || "",
+      node.rawLabel || "",
+      node.label || "",
+      node.title || "",
+      node.ontologyIri || ""
+    ].join(" ").toLowerCase();
+  }}
+
   function wrapTreeLabel(text, maxChars) {{
     if (!text || text.length <= maxChars) {{
       return text;
@@ -1022,6 +1093,22 @@ html, body {{
     themeBtn.style.display = isEmbeddedPreview() ? "none" : "inline-block";
   }}
 
+  function refreshSearchControls() {{
+    const countEl = document.getElementById("ontoviewer-search-count");
+    if (countEl) {{
+      countEl.textContent = searchCountText();
+    }}
+    const disabled = searchMatches.length === 0;
+    const prevBtn = document.getElementById("ontoviewer-search-prev");
+    const nextBtn = document.getElementById("ontoviewer-search-next");
+    if (prevBtn) {{
+      prevBtn.disabled = disabled;
+    }}
+    if (nextBtn) {{
+      nextBtn.disabled = disabled;
+    }}
+  }}
+
   function refreshOntologyLegendControls() {{
     document.querySelectorAll(".ontoviewer-ontology-entry[data-group-id]").forEach((entry) => {{
       const groupId = entry.getAttribute("data-group-id");
@@ -1076,6 +1163,55 @@ html, body {{
     }});
     refreshCollapseToggle();
     refreshOntologyLegendControls();
+  }}
+
+  function currentSearchNodeId() {{
+    if (searchMatchIndex < 0 || searchMatchIndex >= searchMatches.length) {{
+      return null;
+    }}
+    return searchMatches[searchMatchIndex];
+  }}
+
+  function baseBorderWidth(node) {{
+    if (node.ontologyCluster) {{
+      return 3;
+    }}
+    if (node.isClassNode) {{
+      return viewMode === "tree" ? 1.5 : 1;
+    }}
+    if (node.isOntologyNode) {{
+      return node.ontologyLoaded ? 2 : 1;
+    }}
+    return node.borderWidth || 1;
+  }}
+
+  function refreshSearchHighlight() {{
+    const activeNodeId = currentSearchNodeId();
+    const nodesDs = network.body.data.nodes;
+    const nodeUpdates = [];
+    nodesDs.forEach((node) => {{
+      if (!(node.isClassNode || node.isOntologyNode || node.ontologyCluster)) {{
+        return;
+      }}
+      const isActive = activeNodeId !== null && node.id === activeNodeId;
+      nodeUpdates.push({{
+        id: node.id,
+        borderWidth: isActive ? baseBorderWidth(node) + 2 : baseBorderWidth(node),
+        shadow: isActive
+          ? {{
+              enabled: true,
+              color: themeMode === "dark" ? "rgba(56, 189, 248, 0.55)" : "rgba(37, 99, 235, 0.35)",
+              size: 18,
+              x: 0,
+              y: 0
+            }}
+          : {{ enabled: false }}
+      }});
+    }});
+    if (nodeUpdates.length > 0) {{
+      nodesDs.update(nodeUpdates);
+    }}
+    refreshSearchControls();
   }}
 
   function applyNodeStyle(mode) {{
@@ -1161,6 +1297,7 @@ html, body {{
     applyNodeStyle(viewMode);
     refreshEdgeVisibility();
     refreshThemeToggle();
+    refreshSearchHighlight();
     if (notifyParent && window.parent && window.parent !== window) {{
       try {{
         window.parent.postMessage({{ type: "ontoviewer-theme", mode: mode }}, "*");
@@ -1323,6 +1460,7 @@ html, body {{
     }}
 
     refreshEdgeVisibility();
+    refreshSearchHighlight();
   }}
 
   function applyOntologyAttachment(attached) {{
@@ -1376,6 +1514,8 @@ html, body {{
     viewModeButtonState(mode);
     refreshPropertyToggle();
     refreshOntologyLegendControls();
+    refreshSearchHighlight();
+    scheduleCurrentSearchFocus(mode === "tree" ? 120 : 260);
   }}
 
   function refreshAfterClassToggle() {{
@@ -1384,12 +1524,144 @@ html, body {{
       network.setOptions(treeViewOptions);
       applyEdgeOrientation("tree");
       applyNodeStyle("tree");
+      refreshSearchHighlight();
       network.redraw();
       network.fit({{ animation: true }});
       scheduleLoadingBarHide(0);
       return;
     }}
+    refreshSearchHighlight();
     network.stabilize(80);
+  }}
+
+  function expandCollapsedAncestorsForNode(nodeId) {{
+    const childrenByParent = subclassChildrenMap();
+    let changed = false;
+    Array.from(collapsedClassNodes).forEach((parentNodeId) => {{
+      if (parentNodeId === nodeId) {{
+        return;
+      }}
+      const descendants = descendantClassIds(parentNodeId, childrenByParent, new Set());
+      if (descendants.includes(nodeId)) {{
+        collapsedClassNodes.delete(parentNodeId);
+        changed = true;
+      }}
+    }});
+    return changed;
+  }}
+
+  function revealNodeForSearch(nodeId) {{
+    const node = network.body.data.nodes.get(nodeId);
+    if (!node) {{
+      return false;
+    }}
+
+    let changed = false;
+    if (node.isOntologyNode && viewMode === "graph" && !ontologyAttached) {{
+      graphOntologyAttached = true;
+      applyOntologyAttachment(true);
+      changed = true;
+    }}
+
+    if (node.ontologyGroup && collapsedOntologyGroups.has(node.ontologyGroup)) {{
+      expandOntologyGroup(node.ontologyGroup);
+      changed = true;
+    }}
+
+    if (node.isClassNode && expandCollapsedAncestorsForNode(node.id)) {{
+      changed = true;
+    }}
+
+    if (changed) {{
+      applyLabelMode(labelMode);
+      refreshCollapseToggle();
+      if (viewMode === "tree") {{
+        network.stopSimulation();
+        network.setOptions(treeViewOptions);
+        applyEdgeOrientation("tree");
+        applyNodeStyle("tree");
+        network.redraw();
+      }} else {{
+        network.stabilize(80);
+      }}
+      refreshSearchHighlight();
+    }}
+
+    return changed;
+  }}
+
+  function focusNodeNow(nodeId) {{
+    const node = network.body.data.nodes.get(nodeId);
+    if (!node || node.hidden) {{
+      return false;
+    }}
+    pendingSearchFocusNodeId = null;
+    network.focus(nodeId, {{
+      scale: viewMode === "tree" ? 1.2 : 1.15,
+      animation: {{
+        duration: 450,
+        easingFunction: "easeInOutQuad"
+      }}
+    }});
+    return true;
+  }}
+
+  function maybeFocusPendingSearchNode() {{
+    if (!pendingSearchFocusNodeId) {{
+      return;
+    }}
+    focusNodeNow(pendingSearchFocusNodeId);
+  }}
+
+  function scheduleCurrentSearchFocus(delayMs) {{
+    const nodeId = currentSearchNodeId();
+    if (!nodeId) {{
+      pendingSearchFocusNodeId = null;
+      refreshSearchHighlight();
+      return;
+    }}
+    revealNodeForSearch(nodeId);
+    pendingSearchFocusNodeId = nodeId;
+    refreshSearchHighlight();
+    window.setTimeout(maybeFocusPendingSearchNode, delayMs || 0);
+  }}
+
+  function updateSearchMatches(query) {{
+    searchQuery = (query || "").trim().toLowerCase();
+    const previousNodeId = currentSearchNodeId();
+
+    if (!searchQuery) {{
+      searchMatches = [];
+      searchMatchIndex = -1;
+      pendingSearchFocusNodeId = null;
+      refreshSearchHighlight();
+      return;
+    }}
+
+    const matches = [];
+    network.body.data.nodes.forEach((node) => {{
+      if (node.ontologyCluster) {{
+        return;
+      }}
+      if (!(node.isClassNode || node.isOntologyNode)) {{
+        return;
+      }}
+      if (searchableNodeText(node).includes(searchQuery)) {{
+        matches.push(node.id);
+      }}
+    }});
+    searchMatches = matches;
+
+    if (searchMatches.length === 0) {{
+      searchMatchIndex = -1;
+      pendingSearchFocusNodeId = null;
+      refreshSearchHighlight();
+      return;
+    }}
+
+    const preservedIndex = previousNodeId ? searchMatches.indexOf(previousNodeId) : -1;
+    searchMatchIndex = preservedIndex >= 0 ? preservedIndex : 0;
+    scheduleCurrentSearchFocus(0);
   }}
 
   function refreshEdgeVisibility() {{
@@ -1510,6 +1782,27 @@ html, body {{
     applyViewMode(mode);
   }};
 
+  window.ontoviewerUpdateSearch = function(query) {{
+    updateSearchMatches(query);
+  }};
+
+  window.ontoviewerStepSearch = function(direction) {{
+    if (searchMatches.length === 0) {{
+      return;
+    }}
+    const step = direction < 0 ? -1 : 1;
+    searchMatchIndex = (searchMatchIndex + step + searchMatches.length) % searchMatches.length;
+    scheduleCurrentSearchFocus(0);
+  }};
+
+  window.ontoviewerHandleSearchKey = function(event) {{
+    if (event.key !== "Enter") {{
+      return;
+    }}
+    event.preventDefault();
+    window.ontoviewerStepSearch(event.shiftKey ? -1 : 1);
+  }};
+
   window.ontoviewerToggleOntologyGroup = function(groupId) {{
     if (collapsedOntologyGroups.has(groupId)) {{
       expandOntologyGroup(groupId);
@@ -1575,14 +1868,17 @@ html, body {{
 
   network.on("stabilized", function() {{
     scheduleLoadingBarHide(0);
+    maybeFocusPendingSearchNode();
   }});
 
   network.on("animationFinished", function() {{
     scheduleLoadingBarHide(0);
+    maybeFocusPendingSearchNode();
   }});
 
   network.once("afterDrawing", function() {{
     scheduleLoadingBarHide(0);
+    maybeFocusPendingSearchNode();
   }});
 
   applyViewMode("graph");
@@ -1590,6 +1886,7 @@ html, body {{
   applyLabelMode(labelMode);
   refreshCollapseToggle();
   refreshPropertyToggle();
+  refreshSearchControls();
   refreshOntologyLegendControls();
 }})();
 </script>
