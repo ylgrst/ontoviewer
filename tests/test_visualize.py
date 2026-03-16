@@ -53,6 +53,7 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleCollapseAll()" in html
     assert "ontoviewerToggleTheme()" in html
     assert "ontoviewerToggleOntologyGroup(" in html
+    assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "levelSeparation: 140" in html
     assert 'direction: "UD"' in html

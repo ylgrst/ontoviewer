@@ -1008,12 +1008,17 @@ html, body {{
     propertyBtn.style.display = viewMode === "tree" ? "inline-block" : "none";
   }}
 
+  function isEmbeddedPreview() {{
+    return window.parent && window.parent !== window;
+  }}
+
   function refreshThemeToggle() {{
     const themeBtn = document.getElementById("ontoviewer-theme-toggle");
     if (!themeBtn) {{
       return;
     }}
     themeBtn.textContent = themeToggleText(themeMode);
+    themeBtn.style.display = isEmbeddedPreview() ? "none" : "inline-block";
   }}
 
   function refreshOntologyLegendControls() {{
