@@ -123,6 +123,7 @@ def render_interactive_graph(
             ontologyGroup=ontology_group.get(iri, "unknown"),
             ontologyIri=iri,
             isOntologyNode=True,
+            ontologyLoaded=is_loaded,
             level=0,
         )
 
@@ -186,16 +187,11 @@ def render_interactive_graph(
     }
     direct_subclasses = {src for src, _ in subclass_pairs}
     root_classes = class_nodes - direct_subclasses
-    ontology_branch_span = _compute_ontology_branch_spans(
-        ontology_ids=ontology_ids,
-        class_nodes=class_nodes,
-        subclass_pairs=subclass_pairs,
-        class_owner=class_owner,
-    )
     ontology_level = _compute_ontology_levels(
         ontology_ids=ontology_ids,
+        root_iri=closure.root_iri,
         canonical_import_edges=canonical_import_edges,
-        ontology_branch_span=ontology_branch_span,
+        documents=closure.documents,
     )
     class_level = _compute_class_levels(
         class_nodes=class_nodes,
@@ -203,30 +199,6 @@ def render_interactive_graph(
         class_owner=class_owner,
         ontology_level=ontology_level,
     )
-    root_classes_by_owner: Dict[str, Set[str]] = {}
-    for cls in root_classes:
-        owner = class_owner.get(cls)
-        if owner:
-            root_classes_by_owner.setdefault(owner, set()).add(cls)
-
-    for iri, owned_roots in root_classes_by_owner.items():
-        anchor_id = f"treeclass:{iri}"
-        net.add_node(
-            anchor_id,
-            label="",
-            hidden=True,
-            physics=False,
-            level=ontology_level.get(iri, 0) + 1,
-            isTreeHelperNode=True,
-            ontologyIri=iri,
-        )
-        net.add_edge(
-            f"ont:{iri}",
-            anchor_id,
-            edgeType="tree-class-branch",
-            hidden=True,
-            physics=False,
-        )
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
@@ -272,8 +244,6 @@ def render_interactive_graph(
                 f"ont:{owner}",
                 cls,
                 edgeType="layout-root",
-                treeFrom=f"treeclass:{owner}",
-                treeTo=cls,
                 hidden=True,
                 physics=True,
                 length=240,
@@ -437,53 +407,12 @@ def _iri_matches_ontology(entity_iri: str, ontology_iri: str) -> bool:
     return False
 
 
-def _compute_ontology_branch_spans(
-    *,
-    ontology_ids: list[str],
-    class_nodes: Set[str],
-    subclass_pairs: Set[Tuple[str, str]],
-    class_owner: Dict[str, str],
-) -> Dict[str, int]:
-    parents: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
-    children: Dict[str, Set[str]] = {cls: set() for cls in class_nodes}
-
-    for child, parent in subclass_pairs:
-        if class_owner.get(child) != class_owner.get(parent):
-            continue
-        parents.setdefault(child, set()).add(parent)
-        children.setdefault(parent, set()).add(child)
-
-    branch_spans: Dict[str, int] = {}
-    for ontology_iri in ontology_ids:
-        owned_classes = {cls for cls in class_nodes if class_owner.get(cls) == ontology_iri}
-        if not owned_classes:
-            branch_spans[ontology_iri] = 2
-            continue
-
-        roots = [cls for cls in owned_classes if not (parents.get(cls, set()) & owned_classes)]
-        queue: deque[Tuple[str, int]] = deque((cls, 0) for cls in roots or owned_classes)
-        seen_depths: Dict[str, int] = {}
-
-        while queue:
-            current, depth = queue.popleft()
-            if current in seen_depths and depth >= seen_depths[current]:
-                continue
-            seen_depths[current] = depth
-            for child in children.get(current, set()):
-                if child in owned_classes:
-                    queue.append((child, depth + 1))
-
-        max_depth = max(seen_depths.values(), default=0)
-        branch_spans[ontology_iri] = max(2, 2 + max_depth)
-
-    return branch_spans
-
-
 def _compute_ontology_levels(
     *,
     ontology_ids: list[str],
+    root_iri: str,
     canonical_import_edges: Set[Tuple[str, str]],
-    ontology_branch_span: Dict[str, int],
+    documents: Dict[str, object],
 ) -> Dict[str, int]:
     depths: Dict[str, int] = {}
     children: Dict[str, list[str]] = {}
@@ -501,28 +430,30 @@ def _compute_ontology_levels(
             depths[iri] = 0
             queue.append(iri)
 
-    if not queue and ontology_ids:
-        first_iri = ontology_ids[0]
-        depths[first_iri] = 0
-        queue.append(first_iri)
+    if not queue and root_iri:
+        depths[root_iri] = 0
+        queue.append(root_iri)
 
     while queue:
         current = queue.popleft()
         current_depth = depths.get(current, 0)
         for child in children.get(current, []):
-            next_depth = current_depth + ontology_branch_span.get(current, 2) + 1
-            if child not in depths or next_depth > depths[child]:
+            next_depth = current_depth + 1
+            if child not in depths or next_depth < depths[child]:
                 depths[child] = next_depth
                 queue.append(child)
 
     if len(depths) < len(ontology_ids):
+        max_document_depth = max((getattr(doc, "depth", 0) for doc in documents.values()), default=0)
         max_known_depth = max(depths.values(), default=0)
         for iri in ontology_ids:
             if iri in depths:
                 continue
-            depths[iri] = max_known_depth + ontology_branch_span.get(iri, 2) + 1
+            doc = documents.get(iri)
+            guessed_depth = getattr(doc, "depth", 0) if doc is not None else 0
+            depths[iri] = max_known_depth + max(max_document_depth - guessed_depth, 0)
 
-    return {iri: depths.get(iri, 0) for iri in ontology_ids}
+    return {iri: depths.get(iri, 0) * 4 for iri in ontology_ids}
 
 
 def _compute_class_levels(
@@ -545,7 +476,7 @@ def _compute_class_levels(
 
     for cls in roots:
         owner = class_owner.get(cls)
-        levels[cls] = ontology_level.get(owner, 0) + 2
+        levels[cls] = ontology_level.get(owner, 0) + 1
         queue.append(cls)
 
     while queue:
@@ -560,7 +491,7 @@ def _compute_class_levels(
     for cls in class_nodes:
         if cls not in levels:
             owner = class_owner.get(cls)
-            levels[cls] = ontology_level.get(owner, 0) + 2
+            levels[cls] = ontology_level.get(owner, 0) + 1
 
     return levels
 
@@ -577,8 +508,19 @@ def _inject_cluster_controls(
     ontology_items = "".join(
         f"""
         <li class="ontoviewer-ontology-item">
-          <span class="ontoviewer-swatch" style="background:{escape(color)}"></span>
-          <span title="{escape(iri)}">{escape(_short_label(iri))}</span>
+          <button
+            type="button"
+            class="ontoviewer-ontology-entry"
+            data-group-id="{escape(_group_id(iri))}"
+            onclick="window.ontoviewerToggleOntologyGroup('{escape(_group_id(iri))}')"
+            title="{escape(iri)}"
+          >
+            <span class="ontoviewer-ontology-entry-main">
+              <span class="ontoviewer-swatch" style="background:{escape(color)}"></span>
+              <span>{escape(_short_label(iri))}</span>
+            </span>
+            <span class="ontoviewer-ontology-state">Collapse</span>
+          </button>
         </li>
         """
         for iri, color in ontology_legend.items()
@@ -597,16 +539,50 @@ def _inject_cluster_controls(
 
     controls = f"""
 <style>
+:root {{
+  color-scheme: light;
+  --ov-page-bg: #eef2f7;
+  --ov-network-bg: #f8fafc;
+  --ov-panel-bg: rgba(255, 255, 255, 0.97);
+  --ov-border: #d1d5db;
+  --ov-border-strong: #cbd5e1;
+  --ov-text: #111827;
+  --ov-text-muted: #4b5563;
+  --ov-text-soft: #6b7280;
+  --ov-button-bg: #f8fafc;
+  --ov-button-bg-active: #e2e8f0;
+  --ov-button-text: #111827;
+  --ov-shadow: rgba(0, 0, 0, 0.08);
+}}
+html.ontoviewer-dark,
+body.ontoviewer-dark {{
+  color-scheme: dark;
+  --ov-page-bg: #020617;
+  --ov-network-bg: #0f172a;
+  --ov-panel-bg: rgba(15, 23, 42, 0.96);
+  --ov-border: #334155;
+  --ov-border-strong: #475569;
+  --ov-text: #e2e8f0;
+  --ov-text-muted: #cbd5e1;
+  --ov-text-soft: #94a3b8;
+  --ov-button-bg: #0f172a;
+  --ov-button-bg-active: #1e293b;
+  --ov-button-text: #f8fafc;
+  --ov-shadow: rgba(2, 6, 23, 0.45);
+}}
 html, body {{
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: var(--ov-page-bg);
+  color: var(--ov-text);
 }}
 #mynetwork {{
   width: calc(100vw - 360px) !important;
   height: 100vh !important;
+  background: var(--ov-network-bg);
 }}
 .ontoviewer-controls {{
   position: fixed;
@@ -615,11 +591,11 @@ html, body {{
   bottom: 0;
   z-index: 999;
   width: 360px;
-  background: rgba(255, 255, 255, 0.97);
-  border-left: 1px solid #d1d5db;
+  background: var(--ov-panel-bg);
+  border-left: 1px solid var(--ov-border);
   border-radius: 0;
   padding: 10px;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  box-shadow: -8px 0 24px var(--ov-shadow);
   font-family: sans-serif;
   overflow: auto;
 }}
@@ -627,24 +603,28 @@ html, body {{
   margin-right: 6px;
   margin-bottom: 6px;
   padding: 6px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--ov-border-strong);
   border-radius: 6px;
   cursor: pointer;
-  background: #f8fafc;
+  background: var(--ov-button-bg);
+  color: var(--ov-button-text);
 }}
 .ontoviewer-controls button[disabled] {{
   opacity: 0.6;
   cursor: default;
 }}
+.ontoviewer-controls button:not([disabled]):hover {{
+  background: var(--ov-button-bg-active);
+}}
 .ontoviewer-controls hr {{
   border: 0;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--ov-border);
   margin: 10px 0;
 }}
 .ontoviewer-legend-title {{
   font-size: 12px;
   font-weight: 700;
-  color: #374151;
+  color: var(--ov-text);
   margin-bottom: 4px;
 }}
 .ontoviewer-legend-row {{
@@ -652,7 +632,7 @@ html, body {{
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #4b5563;
+  color: var(--ov-text-muted);
   margin-bottom: 4px;
 }}
 .ontoviewer-line {{
@@ -670,9 +650,9 @@ html, body {{
 .ontoviewer-node-box {{
   width: 22px;
   height: 14px;
-  border: 2px solid #374151;
+  border: 2px solid var(--ov-text-muted);
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--ov-button-bg);
   display: inline-block;
 }}
 .ontoviewer-node-dot {{
@@ -690,23 +670,49 @@ html, body {{
   gap: 4px;
 }}
 .ontoviewer-ontology-item {{
+  list-style: none;
+}}
+.ontoviewer-ontology-entry {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ov-text);
+  width: 100%;
+  margin: 0 !important;
+  text-align: left;
+}}
+.ontoviewer-ontology-entry-main {{
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: #374151;
+  min-width: 0;
+}}
+.ontoviewer-ontology-entry-main span:last-child {{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.ontoviewer-ontology-entry.is-collapsed {{
+  background: var(--ov-button-bg-active);
+}}
+.ontoviewer-ontology-state {{
+  font-size: 11px;
+  color: var(--ov-text-soft);
 }}
 .ontoviewer-swatch {{
   width: 12px;
   height: 12px;
   border-radius: 3px;
-  border: 1px solid #9ca3af;
+  border: 1px solid var(--ov-border-strong);
   display: inline-block;
+  flex: 0 0 auto;
 }}
 .ontoviewer-legend-hint {{
   margin-top: 6px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--ov-text-soft);
 }}
 @media (max-width: 1100px) {{
   #mynetwork {{
@@ -721,28 +727,32 @@ html, body {{
     width: 100%;
     height: 260px;
     border-left: none;
-    border-top: 1px solid #d1d5db;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
+    border-top: 1px solid var(--ov-border);
+    box-shadow: 0 -8px 24px var(--ov-shadow);
   }}
 }}
 </style>
 <div class="ontoviewer-controls">
   <button id="ontoviewer-graph-view-btn" onclick="window.ontoviewerSetViewMode('graph')">Graph view</button>
   <button id="ontoviewer-tree-view-btn" onclick="window.ontoviewerSetViewMode('tree')">Family tree view</button>
+  <button id="ontoviewer-theme-toggle" onclick="window.ontoviewerToggleTheme()">Dark mode</button>
   <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button id="ontoviewer-collapse-toggle" onclick="window.ontoviewerToggleCollapseAll()">Collapse by ontology</button>
+  <button id="ontoviewer-property-toggle" onclick="window.ontoviewerToggleTreeRelations()">Show relation edges</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
   <hr />
   <div class="ontoviewer-legend-title">Legend</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-node-box"></span> Ontology node</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-node-dot"></span> Class node (dot in graph view, box in family-tree view)</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
-  <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge (hidden by default in family-tree view)</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> imports edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line" style="border-top-color:#94a3b8;border-top-style:dashed;"></span> ontology membership edge</div>
   <div class="ontoviewer-legend-hint">Click a class node to fold or unfold its descendant subclass tree.</div>
+  <div class="ontoviewer-legend-hint">Click an ontology in the legend to collapse or expand only that ontology.</div>
   <div class="ontoviewer-legend-hint">Use ontology collapse only for high-level overview.</div>
+  <div class="ontoviewer-legend-hint">Family-tree view hides relation edges by default so the hierarchy stays readable.</div>
   <hr />
   <div class="ontoviewer-legend-title">Ontology Colors</div>
   <ul class="ontoviewer-ontology-list">
@@ -759,6 +769,8 @@ html, body {{
   let viewMode = "graph";
   let graphOntologyAttached = false;
   let ontologyAttached = false;
+  let treePropertyEdgesVisible = false;
+  let themeMode = getInitialThemeMode();
   const graphViewOptions = {{
     layout: {{
       hierarchical: false,
@@ -788,9 +800,9 @@ html, body {{
         direction: "UD",
         sortMethod: "directed",
         shakeTowards: "roots",
-        levelSeparation: 145,
-        nodeSpacing: 210,
-        treeSpacing: 240,
+        levelSeparation: 140,
+        nodeSpacing: 170,
+        treeSpacing: 200,
         blockShifting: true,
         edgeMinimization: true,
         parentCentralization: true
@@ -820,6 +832,80 @@ html, body {{
     return clusterIds.size > 0 || collapsedClassNodes.size > 0
       ? "Expand all"
       : "Collapse by ontology";
+  }}
+
+  function propertyToggleText() {{
+    return treePropertyEdgesVisible ? "Hide relation edges" : "Show relation edges";
+  }}
+
+  function themeToggleText(mode) {{
+    return mode === "dark" ? "Light mode" : "Dark mode";
+  }}
+
+  function getInitialThemeMode() {{
+    try {{
+      const stored = window.localStorage.getItem("ontoviewer-theme");
+      if (stored === "light" || stored === "dark") {{
+        return stored;
+      }}
+    }} catch (error) {{
+      // Ignore storage access errors and fall back to a safe default.
+    }}
+    return "light";
+  }}
+
+  function setStoredThemeMode(mode) {{
+    try {{
+      window.localStorage.setItem("ontoviewer-theme", mode);
+    }} catch (error) {{
+      // Ignore storage access errors.
+    }}
+  }}
+
+  function themeFontColor() {{
+    return themeMode === "dark" ? "#f8fafc" : "#111827";
+  }}
+
+  function themeStrokeColor() {{
+    return themeMode === "dark" ? "#0f172a" : "#f3f4f6";
+  }}
+
+  function themeMutedFontColor() {{
+    return themeMode === "dark" ? "#94a3b8" : "#6b7280";
+  }}
+
+  function themeEdgeColor(edgeType) {{
+    if (edgeType === "subclass") {{
+      return "#2563eb";
+    }}
+    if (edgeType === "imports") {{
+      return "#f59e0b";
+    }}
+    if (edgeType === "ontology-membership") {{
+      return themeMode === "dark" ? "#64748b" : "#94a3b8";
+    }}
+    if (edgeType === "property") {{
+      return themeMode === "dark" ? "#cbd5e1" : "#111827";
+    }}
+    return themeMode === "dark" ? "#94a3b8" : "#111827";
+  }}
+
+  function themeEdgeFont(edgeType) {{
+    if (edgeType === "property") {{
+      return {{
+        color: themeMode === "dark" ? "#e2e8f0" : "#111827",
+        strokeWidth: 3,
+        strokeColor: themeMode === "dark" ? "#0f172a" : "#ffffff"
+      }};
+    }}
+    if (edgeType === "imports") {{
+      return {{
+        color: "#f59e0b",
+        strokeWidth: 3,
+        strokeColor: themeMode === "dark" ? "#0f172a" : "#ffffff"
+      }};
+    }}
+    return undefined;
   }}
 
   function wrapTreeLabel(text, maxChars) {{
@@ -864,13 +950,65 @@ html, body {{
 
   function refreshCollapseToggle() {{
     const collapseBtn = document.getElementById("ontoviewer-collapse-toggle");
-    if (collapseBtn) {{
-      collapseBtn.textContent = collapseToggleText();
+    if (!collapseBtn) {{
+      return;
     }}
+    if (viewMode === "tree") {{
+      if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+        collapseBtn.style.display = "inline-block";
+        collapseBtn.textContent = "Expand all";
+      }} else {{
+        collapseBtn.style.display = "none";
+      }}
+      return;
+    }}
+    collapseBtn.style.display = "inline-block";
+    collapseBtn.textContent = collapseToggleText();
+  }}
+
+  function refreshPropertyToggle() {{
+    const propertyBtn = document.getElementById("ontoviewer-property-toggle");
+    if (!propertyBtn) {{
+      return;
+    }}
+    propertyBtn.textContent = propertyToggleText();
+    propertyBtn.style.display = viewMode === "tree" ? "inline-block" : "none";
+  }}
+
+  function refreshThemeToggle() {{
+    const themeBtn = document.getElementById("ontoviewer-theme-toggle");
+    if (!themeBtn) {{
+      return;
+    }}
+    themeBtn.textContent = themeToggleText(themeMode);
+  }}
+
+  function refreshOntologyLegendControls() {{
+    document.querySelectorAll(".ontoviewer-ontology-entry[data-group-id]").forEach((entry) => {{
+      const groupId = entry.getAttribute("data-group-id");
+      const collapsed = clusterIds.has(clusterIdFromGroup(groupId));
+      entry.classList.toggle("is-collapsed", collapsed);
+      entry.disabled = false;
+      entry.title = collapsed ? "Expand this ontology" : "Collapse this ontology";
+      const state = entry.querySelector(".ontoviewer-ontology-state");
+      if (state) {{
+        state.textContent = collapsed ? "Expand" : "Collapse";
+      }}
+    }});
   }}
 
   function clusterIdFromGroup(groupId) {{
     return "cluster:" + groupId;
+  }}
+
+  function openOntologyClusters() {{
+    Array.from(clusterIds).forEach((clusterId) => {{
+      if (network.isCluster(clusterId)) {{
+        network.openCluster(clusterId);
+      }}
+    }});
+    clusterIds.clear();
+    refreshOntologyLegendControls();
   }}
 
   function applyNodeStyle(mode) {{
@@ -887,7 +1025,7 @@ html, body {{
             borderWidth: 1.5,
             widthConstraint: {{ maximum: 220 }},
             font: {{
-              color: "#111827",
+              color: themeFontColor(),
               strokeWidth: 0
             }}
           }});
@@ -901,13 +1039,14 @@ html, body {{
             widthConstraint: false,
             font: {{
               size: 14,
-              color: "#111827",
+              color: themeFontColor(),
               strokeWidth: 4,
-              strokeColor: "#f3f4f6"
+              strokeColor: themeStrokeColor()
             }}
           }});
         }}
       }} else if (node.isOntologyNode) {{
+        const ontologyFontColor = node.ontologyLoaded ? themeFontColor() : themeMutedFontColor();
         if (mode === "tree") {{
           nodeUpdates.push({{
             id: node.id,
@@ -916,7 +1055,7 @@ html, body {{
             widthConstraint: {{ maximum: 240 }},
             font: {{
               size: 14,
-              color: "#111827",
+              color: ontologyFontColor,
               strokeWidth: 0
             }}
           }});
@@ -927,15 +1066,40 @@ html, body {{
             margin: 8,
             widthConstraint: false,
             font: {{
-              color: "#111827",
+              color: ontologyFontColor,
               strokeWidth: 0
             }}
           }});
         }}
+      }} else if (node.ontologyCluster) {{
+        nodeUpdates.push({{
+          id: node.id,
+          font: {{
+            color: themeFontColor(),
+            strokeWidth: 0
+          }}
+        }});
       }}
     }});
     if (nodeUpdates.length > 0) {{
       nodesDs.update(nodeUpdates);
+    }}
+  }}
+
+  function applyTheme(mode, notifyParent) {{
+    themeMode = mode;
+    document.documentElement.classList.toggle("ontoviewer-dark", mode === "dark");
+    document.body.classList.toggle("ontoviewer-dark", mode === "dark");
+    setStoredThemeMode(mode);
+    applyNodeStyle(viewMode);
+    refreshEdgeVisibility();
+    refreshThemeToggle();
+    if (notifyParent && window.parent && window.parent !== window) {{
+      try {{
+        window.parent.postMessage({{ type: "ontoviewer-theme", mode: mode }}, "*");
+      }} catch (error) {{
+        // Ignore parent messaging failures.
+      }}
     }}
   }}
 
@@ -986,12 +1150,13 @@ html, body {{
         shape: "database",
         color: clusterColor,
         font: {{
-          color: "#111827"
+          color: themeFontColor()
         }}
       }}
     }});
     clusterIds.add(clusterId);
     refreshCollapseToggle();
+    refreshOntologyLegendControls();
   }}
 
   function subclassChildrenMap() {{
@@ -1121,6 +1286,7 @@ html, body {{
   function applyViewMode(mode) {{
     viewMode = mode;
     if (mode === "tree") {{
+      openOntologyClusters();
       network.setOptions(treeViewOptions);
       applyEdgeOrientation("tree");
       applyNodeStyle("tree");
@@ -1136,6 +1302,8 @@ html, body {{
       network.stabilize(200);
     }}
     viewModeButtonState(mode);
+    refreshPropertyToggle();
+    refreshOntologyLegendControls();
   }}
 
   function refreshEdgeVisibility() {{
@@ -1146,12 +1314,15 @@ html, body {{
       let nextHidden = false;
       if (edge.edgeType === "layout-root" || edge.edgeType === "layout-subclass") {{
         nextHidden = true;
-      }} else if (edge.edgeType === "tree-class-branch") {{
-        nextHidden = true;
       }} else if (edge.edgeType === "imports") {{
         nextHidden = !ontologyAttached;
       }} else if (edge.edgeType === "ontology-membership") {{
-        nextHidden = viewMode === "tree" || !ontologyAttached || hiddenIds.has(edge.to);
+        nextHidden = !ontologyAttached || hiddenIds.has(edge.to);
+      }} else if (edge.edgeType === "property") {{
+        nextHidden = hiddenIds.has(edge.from) || hiddenIds.has(edge.to);
+        if (viewMode === "tree" && !treePropertyEdgesVisible) {{
+          nextHidden = true;
+        }}
       }} else {{
         nextHidden = hiddenIds.has(edge.from) || hiddenIds.has(edge.to);
       }}
@@ -1163,8 +1334,22 @@ html, body {{
           : (edge.rawLabel || edge.humanLabel || edge.label);
       }}
 
-      if (nextHidden !== Boolean(edge.hidden) || nextLabel !== edge.label) {{
-        edgeUpdates.push({{ id: edge.id, hidden: nextHidden, label: nextLabel }});
+      const nextColor = themeEdgeColor(edge.edgeType);
+      const nextFont = themeEdgeFont(edge.edgeType);
+
+      if (
+        nextHidden !== Boolean(edge.hidden) ||
+        nextLabel !== edge.label ||
+        nextColor !== edge.color ||
+        JSON.stringify(nextFont || null) !== JSON.stringify(edge.font || null)
+      ) {{
+        edgeUpdates.push({{
+          id: edge.id,
+          hidden: nextHidden,
+          label: nextLabel,
+          color: nextColor,
+          font: nextFont
+        }});
       }}
     }});
     if (edgeUpdates.length > 0) {{
@@ -1177,21 +1362,23 @@ html, body {{
       collapseGroup(groupId, label);
     }});
     refreshCollapseToggle();
+    refreshOntologyLegendControls();
   }}
 
   function expandAll() {{
-    Array.from(clusterIds).forEach((clusterId) => {{
-      if (network.isCluster(clusterId)) {{
-        network.openCluster(clusterId);
-      }}
-    }});
-    clusterIds.clear();
+    openOntologyClusters();
     collapsedClassNodes.clear();
     applyLabelMode(labelMode);
     refreshCollapseToggle();
   }}
 
   window.ontoviewerToggleCollapseAll = function() {{
+    if (viewMode === "tree") {{
+      if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+        expandAll();
+      }}
+      return;
+    }}
     if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
       expandAll();
     }} else {{
@@ -1201,6 +1388,26 @@ html, body {{
 
   window.ontoviewerToggleLabels = function() {{
     applyLabelMode(labelMode === "human" ? "raw" : "human");
+  }};
+
+  window.ontoviewerToggleTheme = function() {{
+    applyTheme(themeMode === "dark" ? "light" : "dark", true);
+  }};
+
+  window.ontoviewerApplyExternalTheme = function(mode) {{
+    if (mode !== "light" && mode !== "dark") {{
+      return;
+    }}
+    applyTheme(mode, false);
+  }};
+
+  window.ontoviewerToggleTreeRelations = function() {{
+    if (viewMode !== "tree") {{
+      return;
+    }}
+    treePropertyEdgesVisible = !treePropertyEdgesVisible;
+    refreshPropertyToggle();
+    refreshEdgeVisibility();
   }};
 
   window.ontoviewerToggleAttachment = function() {{
@@ -1214,6 +1421,24 @@ html, body {{
     applyViewMode(mode);
   }};
 
+  window.ontoviewerToggleOntologyGroup = function(groupId) {{
+    const clusterId = clusterIdFromGroup(groupId);
+    if (network.isCluster(clusterId)) {{
+      network.openCluster(clusterId);
+      clusterIds.delete(clusterId);
+    }} else {{
+      collapseGroup(groupId, groupLabels[groupId] || "Ontology");
+    }}
+    applyLabelMode(labelMode);
+    refreshCollapseToggle();
+    refreshOntologyLegendControls();
+    if (viewMode === "tree") {{
+      network.fit({{ animation: true }});
+    }} else {{
+      network.stabilize(80);
+    }}
+  }};
+
   network.on("click", function(params) {{
     if (!params.nodes || params.nodes.length === 0) {{
       return;
@@ -1225,6 +1450,7 @@ html, body {{
       clusterIds.delete(nodeId);
       applyLabelMode(labelMode);
       refreshCollapseToggle();
+      refreshOntologyLegendControls();
       return;
     }}
 
@@ -1246,8 +1472,11 @@ html, body {{
   }});
 
   applyViewMode("graph");
+  applyTheme(themeMode, false);
   applyLabelMode(labelMode);
   refreshCollapseToggle();
+  refreshPropertyToggle();
+  refreshOntologyLegendControls();
 }})();
 </script>
 """

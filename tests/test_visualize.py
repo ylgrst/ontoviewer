@@ -48,11 +48,20 @@ ex:ChildClass a owl:Class ;
     assert stats["imports"] == 1
     assert "Graph view" in html
     assert "Family tree view" in html
+    assert "Dark mode" in html
     assert "ontoviewerSetViewMode('tree')" in html
     assert "ontoviewerToggleCollapseAll()" in html
-    assert "levelSeparation: 145" in html
+    assert "ontoviewerToggleTheme()" in html
+    assert "ontoviewerToggleOntologyGroup(" in html
+    assert "levelSeparation: 140" in html
     assert 'direction: "UD"' in html
     assert 'type: "vertical"' in html
+    assert "roundness: 0" in html
     assert "treeFrom" in html
-    assert "treeclass:" in html
+    assert "wrapTreeLabel" in html
+    assert "ontoviewer-dark" in html
+    assert "ontoviewerApplyExternalTheme" in html
+    assert 'postMessage({ type: "ontoviewer-theme"' in html
+    assert "openOntologyClusters()" in html
+    assert "ontoviewerToggleTreeRelations()" in html
     assert "imports" in html

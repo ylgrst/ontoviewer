@@ -58,6 +58,9 @@ def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypat
     assert "demo.ttl" in page
     assert "Choose a new file if you want to replace it." in page
     assert "insecure fallback enabled" in page
+    assert 'id="ontoviewer-theme-toggle"' in page
+    assert 'id="ontoviewer-graph-frame"' in page
+    assert 'ontoviewer-theme' in page
     assert recorded_kwargs["allow_insecure_ssl"] is True
 
 

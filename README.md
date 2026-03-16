@@ -95,10 +95,12 @@ In the graph UI:
 - Use mouse wheel / trackpad to zoom.
 - Drag background to pan.
 - Use **Graph view / Family tree view** to switch layouts in the same rendered page.
+- Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
 - Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
 - Use **Collapse by ontology / Expand all** as a single toggle for switching between ontology-level overview and fully expanded view.
 - Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
 - Click a class node to fold/unfold its whole descendant subclass tree into that class.
+- Click an ontology entry in the legend to collapse or expand just that ontology in both graph view and family-tree view.
 - Use the built-in legend to understand node and edge types.
 
 Edge conventions:
@@ -130,6 +132,7 @@ Web UI features:
 - Set optional RDF format.
 - Choose default label mode (`human` or `raw`).
 - Optionally enable an insecure SSL fallback for trusted remote import hosts with expired or broken certificates.
+- Share the same dark/light theme between the web UI page and the embedded graph preview.
 - Reload-safe result pages with a visible current-render status.
 - Preview the generated graph inline.
 - Download the generated HTML graph.
