@@ -25,6 +25,7 @@ class RenderResult:
     label_mode: LabelMode
     max_depth: int
     rdf_format: Optional[str]
+    allow_insecure_ssl: bool
     stats: Dict[str, int]
     warnings: list[str]
     created_at: float
@@ -38,14 +39,20 @@ def create_app(*, storage_dir: Path) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64 MB upload limit
 
-    def _default_state() -> dict[str, str]:
-        return {"max_depth": "2", "rdf_format": "", "label_mode": "human"}
+    def _default_state() -> dict[str, str | bool]:
+        return {
+            "max_depth": "2",
+            "rdf_format": "",
+            "label_mode": "human",
+            "allow_insecure_ssl": False,
+        }
 
-    def _state_from_result(result: RenderResult) -> dict[str, str]:
+    def _state_from_result(result: RenderResult) -> dict[str, str | bool]:
         return {
             "max_depth": str(result.max_depth),
             "rdf_format": result.rdf_format or "",
             "label_mode": result.label_mode,
+            "allow_insecure_ssl": result.allow_insecure_ssl,
         }
 
     def _prune_old_renders() -> None:
@@ -61,7 +68,7 @@ def create_app(*, storage_dir: Path) -> Flask:
         *,
         error: Optional[str] = None,
         result: Optional[RenderResult] = None,
-        state: Optional[dict[str, str]] = None,
+        state: Optional[dict[str, str | bool]] = None,
     ) -> str:
         state = state or _default_state()
         return render_template_string(
@@ -94,14 +101,30 @@ def create_app(*, storage_dir: Path) -> Flask:
         rdf_format = (request.form.get("rdf_format") or "").strip() or None
         label_mode_raw = (request.form.get("label_mode") or "human").strip().lower()
         label_mode: LabelMode = "raw" if label_mode_raw == "raw" else "human"
+        allow_insecure_ssl = (request.form.get("allow_insecure_ssl") or "").strip().lower() in {
+            "1",
+            "on",
+            "true",
+            "yes",
+        }
 
         try:
             max_depth = int(max_depth_raw)
         except ValueError:
-            state = {"max_depth": max_depth_raw, "rdf_format": rdf_format or "", "label_mode": label_mode}
+            state = {
+                "max_depth": max_depth_raw,
+                "rdf_format": rdf_format or "",
+                "label_mode": label_mode,
+                "allow_insecure_ssl": allow_insecure_ssl,
+            }
             return _render_home(error="Max depth must be an integer >= 0.", state=state)
         if max_depth < 0:
-            state = {"max_depth": str(max_depth), "rdf_format": rdf_format or "", "label_mode": label_mode}
+            state = {
+                "max_depth": str(max_depth),
+                "rdf_format": rdf_format or "",
+                "label_mode": label_mode,
+                "allow_insecure_ssl": allow_insecure_ssl,
+            }
             return _render_home(error="Max depth must be >= 0.", state=state)
 
         safe_name = secure_filename(uploaded.filename) or "ontology.owl"
@@ -114,11 +137,21 @@ def create_app(*, storage_dir: Path) -> Flask:
         uploaded.save(input_path)
 
         try:
-            closure = load_ontology_closure(input_path, max_depth=max_depth, rdf_format=rdf_format)
+            closure = load_ontology_closure(
+                input_path,
+                max_depth=max_depth,
+                rdf_format=rdf_format,
+                allow_insecure_ssl=allow_insecure_ssl,
+            )
             stats = render_interactive_graph(closure, output_path, label_mode=label_mode)
         except Exception as exc:
             rmtree(run_dir, ignore_errors=True)
-            state = {"max_depth": str(max_depth), "rdf_format": rdf_format or "", "label_mode": label_mode}
+            state = {
+                "max_depth": str(max_depth),
+                "rdf_format": rdf_format or "",
+                "label_mode": label_mode,
+                "allow_insecure_ssl": allow_insecure_ssl,
+            }
             return _render_home(error=f"Could not render ontology: {exc}", state=state)
 
         result = RenderResult(
@@ -129,6 +162,7 @@ def create_app(*, storage_dir: Path) -> Flask:
             label_mode=label_mode,
             max_depth=max_depth,
             rdf_format=rdf_format,
+            allow_insecure_ssl=allow_insecure_ssl,
             stats=stats,
             warnings=closure.errors,
             created_at=time(),
@@ -329,6 +363,20 @@ HOME_TEMPLATE = """
           </select>
         </div>
         <div>
+          <label for="allow_insecure_ssl">Remote import SSL handling</label>
+          <label style="display:flex; gap:8px; align-items:center; margin:0; color:var(--text);">
+            <input
+              id="allow_insecure_ssl"
+              type="checkbox"
+              name="allow_insecure_ssl"
+              value="1"
+              style="width:auto; margin:0;"
+              {% if state.allow_insecure_ssl %}checked{% endif %}
+            />
+            Allow insecure SSL fallback for trusted remote imports with broken certificates
+          </label>
+        </div>
+        <div>
           <button type="submit">Render Graph</button>
         </div>
       </form>
@@ -352,7 +400,11 @@ HOME_TEMPLATE = """
     {% if result %}
       <section class="card">
         <p><b>Source:</b> {{ result.source_name }}</p>
-        <p><b>Label mode:</b> {{ result.label_mode }} | <b>Max depth:</b> {{ result.max_depth }}</p>
+        <p>
+          <b>Label mode:</b> {{ result.label_mode }} |
+          <b>Max depth:</b> {{ result.max_depth }} |
+          <b>SSL:</b> {{ "insecure fallback enabled" if result.allow_insecure_ssl else "strict verification" }}
+        </p>
         <div class="stats">
           <div class="stat"><span>Ontologies</span><b>{{ result.stats.ontologies }}</b></div>
           <div class="stat"><span>Ontology refs</span><b>{{ result.stats.ontology_refs }}</b></div>

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import contextmanager
 from os import name as os_name
 from pathlib import Path
+import ssl
 from typing import Deque, Optional, Set, Tuple
+from urllib.error import URLError
 from urllib.parse import unquote, urljoin, urlparse
 
 from rdflib import Graph, URIRef
@@ -17,6 +20,7 @@ def load_ontology_closure(
     *,
     max_depth: int = 2,
     rdf_format: Optional[str] = None,
+    allow_insecure_ssl: bool = False,
 ) -> OntologyClosure:
     """Load a local ontology and recursively load owl:imports up to max_depth."""
     if max_depth < 0:
@@ -38,10 +42,21 @@ def load_ontology_closure(
         visited_sources.add(source)
 
         try:
-            graph = _load_graph(source, rdf_format=rdf_format)
+            graph, used_insecure_ssl = _load_graph(
+                source,
+                rdf_format=rdf_format,
+                allow_insecure_ssl=allow_insecure_ssl,
+            )
         except Exception as exc:  # pragma: no cover - defensive for unknown RDF parser errors
             closure.errors.append(f"Could not load {source}: {exc}")
             continue
+
+        if used_insecure_ssl:
+            closure.errors.append(
+                "Loaded "
+                f"{source} with SSL verification disabled after certificate validation failed. "
+                "Use this fallback only for hosts you trust."
+            )
 
         ontology_iri = _discover_ontology_iri(graph) or source
 
@@ -87,13 +102,30 @@ def _discover_imports(graph: Graph) -> Set[str]:
     return imports
 
 
-def _load_graph(source: str, *, rdf_format: Optional[str]) -> Graph:
+def _load_graph(
+    source: str,
+    *,
+    rdf_format: Optional[str],
+    allow_insecure_ssl: bool = False,
+) -> tuple[Graph, bool]:
     graph = Graph()
     if source.startswith("file://"):
         graph.parse(_file_uri_to_path(source), format=rdf_format)
-    else:
+        return graph, False
+
+    try:
         graph.parse(source, format=rdf_format)
-    return graph
+        return graph, False
+    except Exception as exc:
+        if not allow_insecure_ssl or not _is_ssl_certificate_verification_error(exc):
+            raise
+
+    # rdflib ultimately relies on urllib for remote fetches, so a temporary
+    # context swap lets us retry only this one parse with certificate checks off.
+    retry_graph = Graph()
+    with _temporary_unverified_ssl_context():
+        retry_graph.parse(source, format=rdf_format)
+    return retry_graph, True
 
 
 def _resolve_import_source(import_iri: str, parent_source: str) -> str:
@@ -127,3 +159,49 @@ def _file_uri_to_path(file_uri: str) -> str:
     if os_name == "nt" and path.startswith("/") and len(path) >= 3 and path[2] == ":":
         path = path[1:]
     return path
+
+
+def _is_ssl_certificate_verification_error(exc: Exception) -> bool:
+    seen: Set[int] = set()
+    stack: list[BaseException] = [exc]
+
+    while stack:
+        current = stack.pop()
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(current, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in str(current):
+            return True
+        if isinstance(current, URLError):
+            reason = current.reason
+            if isinstance(reason, BaseException):
+                stack.append(reason)
+            elif isinstance(reason, str) and "certificate verify failed" in reason.lower():
+                return True
+
+        text = str(current)
+        if "CERTIFICATE_VERIFY_FAILED" in text or "certificate verify failed" in text.lower():
+            return True
+
+        linked = getattr(current, "__cause__", None)
+        if isinstance(linked, BaseException):
+            stack.append(linked)
+        linked = getattr(current, "__context__", None)
+        if isinstance(linked, BaseException):
+            stack.append(linked)
+
+    return False
+
+
+@contextmanager
+def _temporary_unverified_ssl_context():
+    original_context_factory = ssl._create_default_https_context
+    ssl._create_default_https_context = ssl._create_unverified_context
+    try:
+        yield
+    finally:
+        ssl._create_default_https_context = original_context_factory

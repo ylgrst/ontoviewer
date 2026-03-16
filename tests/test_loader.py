@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ssl
+from urllib.error import URLError
 
 import pytest
 
-from ontoviewer.loader import load_ontology_closure
+from ontoviewer import loader
+from ontoviewer.loader import _load_graph, load_ontology_closure
 
 
 def test_recursive_imports_honor_depth_limit(tmp_path: Path) -> None:
@@ -85,3 +88,44 @@ def test_unresolved_import_keeps_edge_and_warning(tmp_path: Path) -> None:
 def test_missing_input_file_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_ontology_closure(tmp_path / "not_there.owl")
+
+
+def test_ssl_verification_failure_can_retry_insecure(monkeypatch) -> None:
+    calls: list[object] = []
+
+    def fake_parse(self, source, format=None, **kwargs):
+        calls.append(ssl._create_default_https_context)
+        if len(calls) == 1:
+            raise URLError(
+                ssl.SSLCertVerificationError(1, "certificate verify failed: certificate has expired")
+            )
+        return self
+
+    monkeypatch.setattr(loader.Graph, "parse", fake_parse)
+
+    _, used_insecure_ssl = _load_graph(
+        "https://example.org/import.ttl",
+        rdf_format="turtle",
+        allow_insecure_ssl=True,
+    )
+
+    assert used_insecure_ssl is True
+    assert len(calls) == 2
+    assert calls[0] is not ssl._create_unverified_context
+    assert calls[1] is ssl._create_unverified_context
+
+
+def test_ssl_verification_failure_without_fallback_still_errors(monkeypatch) -> None:
+    def fake_parse(self, source, format=None, **kwargs):
+        raise URLError(
+            ssl.SSLCertVerificationError(1, "certificate verify failed: certificate has expired")
+        )
+
+    monkeypatch.setattr(loader.Graph, "parse", fake_parse)
+
+    with pytest.raises(URLError):
+        _load_graph(
+            "https://example.org/import.ttl",
+            rdf_format="turtle",
+            allow_insecure_ssl=False,
+        )

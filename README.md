@@ -86,6 +86,7 @@ Options:
 - `--output`, `-o`: output HTML file path.
 - `--format`: force parser format (example: `xml`, `turtle`, `n3`, `nt`).
 - `--label-mode`: initial display mode for class/property labels (`human` or `raw`).
+- `--allow-insecure-ssl`: retry remote imports without certificate verification when a remote host presents a broken or expired certificate.
 
 After the command runs, open the generated HTML file in a browser.
 The CLI summary includes loaded ontologies, total ontology references, and unresolved imports.
@@ -128,6 +129,7 @@ Web UI features:
 - Configure import recursion depth.
 - Set optional RDF format.
 - Choose default label mode (`human` or `raw`).
+- Optionally enable an insecure SSL fallback for trusted remote import hosts with expired or broken certificates.
 - Reload-safe result pages with a visible current-render status.
 - Preview the generated graph inline.
 - Download the generated HTML graph.
@@ -156,6 +158,7 @@ pytest
 
 - Import loading relies on import IRIs being resolvable from your environment.
 - Remote import retrieval failures are reported as warnings; graph generation still completes with available ontologies.
+- Some ontology hosts publish expired TLS certificates. OntoViewer keeps strict verification by default, but the CLI flag `--allow-insecure-ssl` and the matching Web UI checkbox let you opt into a fallback retry for trusted hosts only.
 - Class/property node labels use annotation metadata (`rdfs:label`, `skos:prefLabel`, `IAO_0000111`, etc.) when present, then fall back to IRI-derived codes.
 - This baseline focuses on class-level graph exploration. More advanced filtering/layout controls will be added in next commits.
 

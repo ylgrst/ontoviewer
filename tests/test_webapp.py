@@ -12,7 +12,10 @@ from ontoviewer.webapp import create_app
 
 
 def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypatch) -> None:
+    recorded_kwargs = {}
+
     def fake_load_ontology_closure(*args, **kwargs):
+        recorded_kwargs.update(kwargs)
         return SimpleNamespace(errors=[])
 
     def fake_render_interactive_graph(_closure, output_path: Path, *, label_mode: str):
@@ -39,6 +42,7 @@ def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypat
             "max_depth": "2",
             "rdf_format": "turtle",
             "label_mode": "human",
+            "allow_insecure_ssl": "1",
         },
         content_type="multipart/form-data",
         follow_redirects=False,
@@ -53,6 +57,8 @@ def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypat
     assert "Current render:" in page
     assert "demo.ttl" in page
     assert "Choose a new file if you want to replace it." in page
+    assert "insecure fallback enabled" in page
+    assert recorded_kwargs["allow_insecure_ssl"] is True
 
 
 def test_missing_render_id_shows_error(tmp_path: Path) -> None:

@@ -37,9 +37,22 @@ def render(
         "--label-mode",
         help="Default graph label mode: human-readable annotation labels or raw ontology codes.",
     ),
+    allow_insecure_ssl: bool = typer.Option(
+        False,
+        "--allow-insecure-ssl/--strict-ssl",
+        help=(
+            "Retry remote imports without certificate verification if HTTPS validation fails. "
+            "Use only for trusted ontology hosts."
+        ),
+    ),
 ) -> None:
     """Render an interactive graph from a local ontology file."""
-    closure = load_ontology_closure(ontology_file, max_depth=max_depth, rdf_format=rdf_format)
+    closure = load_ontology_closure(
+        ontology_file,
+        max_depth=max_depth,
+        rdf_format=rdf_format,
+        allow_insecure_ssl=allow_insecure_ssl,
+    )
     stats = render_interactive_graph(closure, output, label_mode=label_mode)
 
     typer.echo(f"Graph written to: {output.resolve()}")
