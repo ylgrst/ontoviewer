@@ -28,36 +28,115 @@ Many ontology graph tools are hard to use or no longer maintained. OntoViewer ai
 ### Prerequisites
 - Python 3.10+
 
-### End-user install
+### Recommended: Web UI install
 
-For command-line usage only:
+This is the easiest way to use OntoViewer if you are not comfortable with the command line.
+
+#### Linux / macOS
+
+Do this once:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python -m venv ontoviewer
+source ontoviewer/bin/activate
+pip install --upgrade pip
+pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+Then, whenever you want to use OntoViewer again:
+
+```bash
+source ontoviewer/bin/activate
+ontoviewer serve --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000` in your browser.
+
+#### Windows PowerShell
+
+Do this once:
+
+```powershell
+py -3 -m venv ontoviewer
+.\ontoviewer\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+Then, whenever you want to use OntoViewer again:
+
+```powershell
+.\ontoviewer\Scripts\Activate.ps1
+ontoviewer serve --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000` in your browser.
+
+If PowerShell blocks the activation script, run this once in PowerShell and then try again:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### Command-line install
+
+If you prefer generating an HTML graph from the terminal without the web UI:
+
+#### Linux / macOS
+
+```bash
+python -m venv ontoviewer
+source ontoviewer/bin/activate
 pip install --upgrade pip
 pip install "git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
-For command-line usage plus the local web UI:
+Then, whenever you want to use OntoViewer again:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+source ontoviewer/bin/activate
+ontoviewer render /path/to/ontology.owl --output ontology_graph.html --max-depth 2
+```
+
+#### Windows PowerShell
+
+```powershell
+py -3 -m venv ontoviewer
+.\ontoviewer\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install "git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+Then, whenever you want to use OntoViewer again:
+
+```powershell
+.\ontoviewer\Scripts\Activate.ps1
+ontoviewer render C:\path\to\ontology.owl --output ontology_graph.html --max-depth 2
 ```
 
 ### Development install
 
 If you want to work on the codebase itself:
 
+#### Linux / macOS
+
 ```bash
 git clone https://github.com/ylgrst/ontoviewer.git
 cd ontoviewer
-python -m venv .venv
-source .venv/bin/activate
+python -m venv ontoviewer
+source ontoviewer/bin/activate
 pip install --upgrade pip
+pip install -e .
+```
+
+#### Windows PowerShell
+
+```powershell
+git clone https://github.com/ylgrst/ontoviewer.git
+cd ontoviewer
+py -3 -m venv ontoviewer
+.\ontoviewer\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
@@ -75,6 +154,42 @@ pip install -e ".[web]"
 
 ## Usage
 
+### Local Web UI
+
+Start the web UI:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8000
+```
+
+Then open `http://127.0.0.1:8000` in your browser.
+
+In the graph UI:
+- Use mouse wheel / trackpad to zoom.
+- Drag background to pan.
+- Use **Graph view / Family tree view** to switch layouts in the same rendered page.
+- Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
+- Use the search bar to find node labels, then jump between matches with the left/right arrows.
+- Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
+- Use **Collapse by ontology / Expand all** as a single toggle for switching between ontology-level overview and fully expanded view.
+- Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
+- Click a class node to fold/unfold its whole descendant subclass tree into that class.
+- Click an ontology entry in the legend to collapse or expand just that ontology in both graph view and family-tree view.
+- Use the built-in legend to understand node and edge types.
+
+Web UI features:
+- Upload a local ontology file.
+- Configure import recursion depth.
+- Set optional RDF format.
+- Choose default label mode (`human` or `raw`).
+- Optionally enable an insecure SSL fallback for trusted remote import hosts with expired or broken certificates.
+- Share the same dark/light theme between the web UI page and the embedded graph preview.
+- Reload-safe result pages with a visible current-render status.
+- Preview the generated graph inline.
+- Download the generated HTML graph.
+
+### CLI
+
 Render a graph:
 
 ```bash
@@ -91,19 +206,6 @@ Options:
 After the command runs, open the generated HTML file in a browser.
 The CLI summary includes loaded ontologies, total ontology references, and unresolved imports.
 
-In the graph UI:
-- Use mouse wheel / trackpad to zoom.
-- Drag background to pan.
-- Use **Graph view / Family tree view** to switch layouts in the same rendered page.
-- Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
-- Use the search bar to find node labels, then jump between matches with the left/right arrows.
-- Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
-- Use **Collapse by ontology / Expand all** as a single toggle for switching between ontology-level overview and fully expanded view.
-- Use **Show raw labels / Show human labels** to switch between ontology codes and human-readable labels.
-- Click a class node to fold/unfold its whole descendant subclass tree into that class.
-- Click an ontology entry in the legend to collapse or expand just that ontology in both graph view and family-tree view.
-- Use the built-in legend to understand node and edge types.
-
 Edge conventions:
 - `subClassOf`: solid blue arrow, no text label (reduced clutter).
 - `property relation`: solid dark arrow, labeled with property name.
@@ -116,27 +218,6 @@ Layout behavior:
 - In family-tree view, classes are arranged by hierarchy level so daughter classes descend from their mother class.
 - In family-tree view, imported ontologies sit above the ontologies that import them, so dependency chains flow downward.
 - In family-tree view, nodes are rendered as labeled boxes and edges use orthogonal routing for a more tree-like structure.
-
-### Local Web UI
-
-Start the web UI:
-
-```bash
-ontoviewer serve --host 127.0.0.1 --port 8000
-```
-
-Then open `http://127.0.0.1:8000` in your browser.
-
-Web UI features:
-- Upload a local ontology file.
-- Configure import recursion depth.
-- Set optional RDF format.
-- Choose default label mode (`human` or `raw`).
-- Optionally enable an insecure SSL fallback for trusted remote import hosts with expired or broken certificates.
-- Share the same dark/light theme between the web UI page and the embedded graph preview.
-- Reload-safe result pages with a visible current-render status.
-- Preview the generated graph inline.
-- Download the generated HTML graph.
 
 ## Project layout
 
