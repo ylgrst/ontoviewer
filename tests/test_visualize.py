@@ -53,6 +53,8 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleCollapseAll()" in html
     assert "ontoviewerToggleTheme()" in html
     assert "ontoviewerToggleOntologyGroup(" in html
+    assert "collapsedOntologyGroups" in html
+    assert "reapplyCollapsedOntologyGroups()" in html
     assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "levelSeparation: 140" in html
@@ -68,6 +70,6 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewer-dark" in html
     assert "ontoviewerApplyExternalTheme" in html
     assert 'postMessage({ type: "ontoviewer-theme"' in html
-    assert "openOntologyClusters()" in html
+    assert "openOntologyClusters(false)" in html
     assert "ontoviewerToggleTreeRelations()" in html
     assert "imports" in html

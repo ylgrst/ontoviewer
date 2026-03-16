@@ -764,6 +764,7 @@ html, body {{
 (function() {{
   const groupLabels = {json.dumps(group_labels)};
   const clusterIds = new Set();
+  const collapsedOntologyGroups = new Set();
   const collapsedClassNodes = new Set();
   let labelMode = {json.dumps(initial_label_mode)};
   let viewMode = "graph";
@@ -839,7 +840,7 @@ html, body {{
   }}
 
   function collapseToggleText() {{
-    return clusterIds.size > 0 || collapsedClassNodes.size > 0
+    return collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0
       ? "Expand all"
       : "Collapse by ontology";
   }}
@@ -987,7 +988,7 @@ html, body {{
       return;
     }}
     if (viewMode === "tree") {{
-      if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+      if (collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0) {{
         collapseBtn.style.display = "inline-block";
         collapseBtn.textContent = "Expand all";
       }} else {{
@@ -1024,7 +1025,7 @@ html, body {{
   function refreshOntologyLegendControls() {{
     document.querySelectorAll(".ontoviewer-ontology-entry[data-group-id]").forEach((entry) => {{
       const groupId = entry.getAttribute("data-group-id");
-      const collapsed = clusterIds.has(clusterIdFromGroup(groupId));
+      const collapsed = collapsedOntologyGroups.has(groupId);
       entry.classList.toggle("is-collapsed", collapsed);
       entry.disabled = false;
       entry.title = collapsed ? "Expand this ontology" : "Collapse this ontology";
@@ -1039,13 +1040,41 @@ html, body {{
     return "cluster:" + groupId;
   }}
 
-  function openOntologyClusters() {{
+  function groupIdFromClusterId(clusterId) {{
+    return clusterId.startsWith("cluster:") ? clusterId.slice("cluster:".length) : null;
+  }}
+
+  function openOntologyClusters(clearTrackedGroups) {{
     Array.from(clusterIds).forEach((clusterId) => {{
       if (network.isCluster(clusterId)) {{
         network.openCluster(clusterId);
       }}
     }});
     clusterIds.clear();
+    if (clearTrackedGroups) {{
+      collapsedOntologyGroups.clear();
+    }}
+    refreshOntologyLegendControls();
+  }}
+
+  function expandOntologyGroup(groupId) {{
+    const clusterId = clusterIdFromGroup(groupId);
+    if (network.isCluster(clusterId)) {{
+      network.openCluster(clusterId);
+    }}
+    clusterIds.delete(clusterId);
+    collapsedOntologyGroups.delete(groupId);
+    refreshCollapseToggle();
+    refreshOntologyLegendControls();
+  }}
+
+  function reapplyCollapsedOntologyGroups() {{
+    Object.entries(groupLabels).forEach(([groupId, label]) => {{
+      if (collapsedOntologyGroups.has(groupId)) {{
+        collapseGroup(groupId, label);
+      }}
+    }});
+    refreshCollapseToggle();
     refreshOntologyLegendControls();
   }}
 
@@ -1193,6 +1222,7 @@ html, body {{
       }}
     }});
     clusterIds.add(clusterId);
+    collapsedOntologyGroups.add(groupId);
     refreshCollapseToggle();
     refreshOntologyLegendControls();
   }}
@@ -1323,14 +1353,15 @@ html, body {{
 
   function applyViewMode(mode) {{
     viewMode = mode;
+    openOntologyClusters(false);
     if (mode === "tree") {{
       network.stopSimulation();
-      openOntologyClusters();
       network.setOptions(treeViewOptions);
       applyEdgeOrientation("tree");
       applyNodeStyle("tree");
       applyOntologyAttachment(true);
       applyLabelMode(labelMode);
+      reapplyCollapsedOntologyGroups();
       network.fit({{ animation: true }});
       scheduleLoadingBarHide(0);
     }} else {{
@@ -1339,6 +1370,7 @@ html, body {{
       applyNodeStyle("graph");
       applyOntologyAttachment(graphOntologyAttached);
       applyLabelMode(labelMode);
+      reapplyCollapsedOntologyGroups();
       network.stabilize(200);
     }}
     viewModeButtonState(mode);
@@ -1398,6 +1430,9 @@ html, body {{
   }}
 
   function collapseAllByOntology() {{
+    Object.keys(groupLabels).forEach((groupId) => {{
+      collapsedOntologyGroups.add(groupId);
+    }});
     Object.entries(groupLabels).forEach(([groupId, label]) => {{
       collapseGroup(groupId, label);
     }});
@@ -1406,7 +1441,7 @@ html, body {{
   }}
 
   function expandAll() {{
-    openOntologyClusters();
+    openOntologyClusters(true);
     collapsedClassNodes.clear();
     applyLabelMode(labelMode);
     refreshCollapseToggle();
@@ -1414,12 +1449,12 @@ html, body {{
 
   window.ontoviewerToggleCollapseAll = function() {{
     if (viewMode === "tree") {{
-      if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+      if (collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0) {{
         expandAll();
       }}
       return;
     }}
-    if (clusterIds.size > 0 || collapsedClassNodes.size > 0) {{
+    if (collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0) {{
       expandAll();
     }} else {{
       collapseAllByOntology();
@@ -1462,10 +1497,8 @@ html, body {{
   }};
 
   window.ontoviewerToggleOntologyGroup = function(groupId) {{
-    const clusterId = clusterIdFromGroup(groupId);
-    if (network.isCluster(clusterId)) {{
-      network.openCluster(clusterId);
-      clusterIds.delete(clusterId);
+    if (collapsedOntologyGroups.has(groupId)) {{
+      expandOntologyGroup(groupId);
     }} else {{
       collapseGroup(groupId, groupLabels[groupId] || "Ontology");
     }}
@@ -1486,11 +1519,16 @@ html, body {{
     const nodeId = params.nodes[0];
 
     if (network.isCluster(nodeId)) {{
-      network.openCluster(nodeId);
-      clusterIds.delete(nodeId);
+      const groupId = groupIdFromClusterId(nodeId);
+      if (groupId) {{
+        expandOntologyGroup(groupId);
+      }} else {{
+        network.openCluster(nodeId);
+        clusterIds.delete(nodeId);
+        refreshCollapseToggle();
+        refreshOntologyLegendControls();
+      }}
       applyLabelMode(labelMode);
-      refreshCollapseToggle();
-      refreshOntologyLegendControls();
       return;
     }}
 
