@@ -53,12 +53,17 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleCollapseAll()" in html
     assert "ontoviewerToggleTheme()" in html
     assert "ontoviewerToggleOntologyGroup(" in html
+    assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "levelSeparation: 140" in html
     assert 'direction: "UD"' in html
     assert 'type: "vertical"' in html
     assert "roundness: 0" in html
     assert "treeFrom" in html
     assert "wrapTreeLabel" in html
+    assert "hideLoadingBar" in html
+    assert 'network.on("stabilized"' in html
+    assert 'network.on("animationFinished"' in html
+    assert "network.stopSimulation()" in html
     assert "ontoviewer-dark" in html
     assert "ontoviewerApplyExternalTheme" in html
     assert 'postMessage({ type: "ontoviewer-theme"' in html

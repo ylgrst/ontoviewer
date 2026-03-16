@@ -772,6 +772,11 @@ html, body {{
   let treePropertyEdgesVisible = false;
   let themeMode = getInitialThemeMode();
   const graphViewOptions = {{
+    interaction: {{
+      dragNodes: true,
+      dragView: true,
+      zoomView: true
+    }},
     layout: {{
       hierarchical: false,
       improvedLayout: true
@@ -794,6 +799,11 @@ html, body {{
     }}
   }};
   const treeViewOptions = {{
+    interaction: {{
+      dragNodes: false,
+      dragView: true,
+      zoomView: true
+    }},
     layout: {{
       hierarchical: {{
         enabled: true,
@@ -906,6 +916,29 @@ html, body {{
       }};
     }}
     return undefined;
+  }}
+
+  function hideLoadingBar() {{
+    const loadingBar = document.getElementById("loadingBar");
+    if (!loadingBar) {{
+      return;
+    }}
+    const text = document.getElementById("text");
+    if (text) {{
+      text.textContent = "100%";
+    }}
+    const bar = document.getElementById("bar");
+    if (bar) {{
+      bar.style.width = "496px";
+    }}
+    loadingBar.style.opacity = 0;
+    loadingBar.style.display = "none";
+    loadingBar.style.visibility = "hidden";
+    loadingBar.setAttribute("aria-hidden", "true");
+  }}
+
+  function scheduleLoadingBarHide(delayMs) {{
+    window.setTimeout(hideLoadingBar, delayMs || 0);
   }}
 
   function wrapTreeLabel(text, maxChars) {{
@@ -1286,6 +1319,7 @@ html, body {{
   function applyViewMode(mode) {{
     viewMode = mode;
     if (mode === "tree") {{
+      network.stopSimulation();
       openOntologyClusters();
       network.setOptions(treeViewOptions);
       applyEdgeOrientation("tree");
@@ -1293,6 +1327,7 @@ html, body {{
       applyOntologyAttachment(true);
       applyLabelMode(labelMode);
       network.fit({{ animation: true }});
+      scheduleLoadingBarHide(0);
     }} else {{
       network.setOptions(graphViewOptions);
       applyEdgeOrientation("graph");
@@ -1469,6 +1504,18 @@ html, body {{
     }}
     applyLabelMode(labelMode);
     refreshCollapseToggle();
+  }});
+
+  network.on("stabilized", function() {{
+    scheduleLoadingBarHide(0);
+  }});
+
+  network.on("animationFinished", function() {{
+    scheduleLoadingBarHide(0);
+  }});
+
+  network.once("afterDrawing", function() {{
+    scheduleLoadingBarHide(0);
   }});
 
   applyViewMode("graph");
