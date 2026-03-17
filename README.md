@@ -26,7 +26,9 @@ Many ontology graph tools are hard to use or no longer maintained. OntoViewer ai
 ## Install
 
 ### Prerequisites
-- Python 3.10+
+- Conda installed
+  `Miniconda` is recommended, but `Anaconda`, `Mambaforge`, and similar Conda-compatible distributions also work.
+- Git installed
 
 ### Recommended: Web UI install
 
@@ -34,19 +36,21 @@ This is the easiest way to use OntoViewer if you are not comfortable with the co
 
 #### Linux / macOS
 
+If `conda` is not recognized in your shell, run `conda init bash` or `conda init zsh` once, then reopen your terminal.
+
 Do this once:
 
 ```bash
-python -m venv ontoviewer
-source ontoviewer/bin/activate
-pip install --upgrade pip
-pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
+python -m pip install --upgrade pip
+python -m pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
 Then, whenever you want to use OntoViewer again:
 
 ```bash
-source ontoviewer/bin/activate
+conda activate ontoviewer
 ontoviewer serve --host 127.0.0.1 --port 8000
 ```
 
@@ -54,29 +58,38 @@ Open `http://127.0.0.1:8000` in your browser.
 
 #### Windows PowerShell
 
+Open `Anaconda Prompt` or PowerShell with Conda initialized.
+
+Quick checks:
+
+```powershell
+conda --version
+python --version
+```
+
+If `conda` is not recognized in PowerShell but you do have Conda installed, run this once and then reopen PowerShell:
+
+```powershell
+conda init powershell
+```
+
 Do this once:
 
 ```powershell
-py -3 -m venv ontoviewer
-.\ontoviewer\Scripts\Activate.ps1
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
 python -m pip install --upgrade pip
-pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+python -m pip install "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
 Then, whenever you want to use OntoViewer again:
 
 ```powershell
-.\ontoviewer\Scripts\Activate.ps1
+conda activate ontoviewer
 ontoviewer serve --host 127.0.0.1 --port 8000
 ```
 
 Open `http://127.0.0.1:8000` in your browser.
-
-If PowerShell blocks the activation script, run this once in PowerShell and then try again:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
 
 ### Command-line install
 
@@ -84,33 +97,50 @@ If you prefer generating an HTML graph from the terminal without the web UI:
 
 #### Linux / macOS
 
+If `conda` is not recognized in your shell, run `conda init bash` or `conda init zsh` once, then reopen your terminal.
+
 ```bash
-python -m venv ontoviewer
-source ontoviewer/bin/activate
-pip install --upgrade pip
-pip install "git+https://github.com/ylgrst/ontoviewer.git"
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
+python -m pip install --upgrade pip
+python -m pip install "git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
 Then, whenever you want to use OntoViewer again:
 
 ```bash
-source ontoviewer/bin/activate
+conda activate ontoviewer
 ontoviewer render /path/to/ontology.owl --output ontology_graph.html --max-depth 2
 ```
 
 #### Windows PowerShell
 
+Open `Anaconda Prompt` or PowerShell with Conda initialized.
+
+Quick checks:
+
 ```powershell
-py -3 -m venv ontoviewer
-.\ontoviewer\Scripts\Activate.ps1
+conda --version
+python --version
+```
+
+If `conda` is not recognized in PowerShell but you do have Conda installed, run this once and then reopen PowerShell:
+
+```powershell
+conda init powershell
+```
+
+```powershell
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
 python -m pip install --upgrade pip
-pip install "git+https://github.com/ylgrst/ontoviewer.git"
+python -m pip install "git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
 Then, whenever you want to use OntoViewer again:
 
 ```powershell
-.\ontoviewer\Scripts\Activate.ps1
+conda activate ontoviewer
 ontoviewer render C:\path\to\ontology.owl --output ontology_graph.html --max-depth 2
 ```
 
@@ -123,10 +153,10 @@ If you want to work on the codebase itself:
 ```bash
 git clone https://github.com/ylgrst/ontoviewer.git
 cd ontoviewer
-python -m venv ontoviewer
-source ontoviewer/bin/activate
-pip install --upgrade pip
-pip install -e .
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,web]"
 ```
 
 #### Windows PowerShell
@@ -134,22 +164,43 @@ pip install -e .
 ```powershell
 git clone https://github.com/ylgrst/ontoviewer.git
 cd ontoviewer
-py -3 -m venv ontoviewer
-.\ontoviewer\Scripts\Activate.ps1
+conda create -n ontoviewer python=3.12
+conda activate ontoviewer
 python -m pip install --upgrade pip
-pip install -e .
+python -m pip install -e ".[dev,web]"
 ```
 
-Add development test dependencies:
+### Updating an existing installation
+
+If a new OntoViewer version is available, activate your Conda environment first:
 
 ```bash
-pip install -e ".[dev]"
+conda activate ontoviewer
 ```
 
-Add local web UI dependencies:
+If you installed the Web UI version from GitHub:
 
 ```bash
-pip install -e ".[web]"
+python -m pip install --upgrade "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+If you installed the CLI-only version from GitHub:
+
+```bash
+python -m pip install --upgrade "git+https://github.com/ylgrst/ontoviewer.git"
+```
+
+If you cloned the repository and installed it in editable mode:
+
+```bash
+git pull
+python -m pip install -e ".[dev,web]"
+```
+
+If `pip` says everything is already installed but you still want to force a refresh:
+
+```bash
+python -m pip install --upgrade --force-reinstall "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
 ## Usage

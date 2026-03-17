@@ -553,6 +553,7 @@ def _inject_cluster_controls(
   --ov-button-bg-active: #e2e8f0;
   --ov-button-text: #111827;
   --ov-shadow: rgba(0, 0, 0, 0.08);
+  --ov-legend-edge: #111827;
 }}
 html.ontoviewer-dark,
 body.ontoviewer-dark {{
@@ -569,6 +570,7 @@ body.ontoviewer-dark {{
   --ov-button-bg-active: #1e293b;
   --ov-button-text: #f8fafc;
   --ov-shadow: rgba(2, 6, 23, 0.45);
+  --ov-legend-edge: #cbd5e1;
 }}
 html, body {{
   margin: 0;
@@ -669,7 +671,7 @@ html, body {{
 .ontoviewer-line {{
   display: inline-block;
   width: 28px;
-  border-top: 2px solid #111827;
+  border-top: 2px solid var(--ov-legend-edge);
 }}
 .ontoviewer-line-subclass {{
   border-top-color: #2563eb;

@@ -77,6 +77,8 @@ ex:ChildClass a owl:Class ;
     assert 'network.on("animationFinished"' in html
     assert "network.stopSimulation()" in html
     assert "ontoviewer-dark" in html
+    assert "--ov-legend-edge: #111827;" in html
+    assert "--ov-legend-edge: #cbd5e1;" in html
     assert "ontoviewerApplyExternalTheme" in html
     assert 'postMessage({ type: "ontoviewer-theme"' in html
     assert "openOntologyClusters(false)" in html
