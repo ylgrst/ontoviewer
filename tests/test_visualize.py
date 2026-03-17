@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 pytest.importorskip("pyvis")
 
 from ontoviewer.loader import load_ontology_closure
+from ontoviewer.visualize import Network
 from ontoviewer.visualize import render_interactive_graph
 
 
@@ -84,3 +86,34 @@ ex:ChildClass a owl:Class ;
     assert "openOntologyClusters(false)" in html
     assert "ontoviewerToggleTreeRelations()" in html
     assert "imports" in html
+
+
+def test_render_avoids_pyvis_default_file_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root_file = tmp_path / "unicode.ttl"
+    output_file = tmp_path / "graph.html"
+
+    root_file.write_text(
+        """
+@prefix ex: <http://example.org/root#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://example.org/root> a owl:Ontology .
+ex:Classe a owl:Class ;
+    rdfs:label "Température µm"@fr .
+""",
+        encoding="utf-8",
+    )
+
+    def fail_write_html(self, name, local=True, notebook=False, open_browser=False):
+        raise AssertionError("render_interactive_graph should write UTF-8 HTML itself")
+
+    monkeypatch.setattr(Network, "write_html", fail_write_html)
+
+    closure = load_ontology_closure(root_file, max_depth=0, rdf_format="turtle")
+    render_interactive_graph(closure, output_file, label_mode="human")
+
+    html = output_file.read_text(encoding="utf-8")
+    assert json.dumps("Température µm")[1:-1] in html

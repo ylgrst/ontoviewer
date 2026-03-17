@@ -317,7 +317,7 @@ def render_interactive_graph(
             node["level"] = ontology_level.get(iri, 0)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    net.write_html(str(output_path))
+    output_path.write_text(net.generate_html(notebook=False), encoding="utf-8")
     has_unresolved_ontology_nodes = any(iri not in closure.documents for iri in ontology_ids)
     _inject_cluster_controls(
         output_path,
