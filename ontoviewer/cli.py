@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
 import threading
 from typing import Literal, Optional
 import webbrowser
@@ -201,11 +204,42 @@ def _browser_url(host: str, port: int) -> str:
     return f"http://{browser_host}:{port}"
 
 
-def _launch_browser(url: str) -> None:
+def _launch_browser(url: str) -> bool:
     try:
-        webbrowser.open_new_tab(url)
+        if webbrowser.open_new_tab(url):
+            return True
     except Exception:
-        return
+        pass
+
+    if os.name == "nt":
+        startfile = getattr(os, "startfile", None)
+        if startfile is not None:
+            try:
+                startfile(url)
+                return True
+            except OSError:
+                pass
+    elif sys.platform == "darwin":
+        try:
+            subprocess.Popen(
+                ["open", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except OSError:
+            pass
+    else:
+        try:
+            subprocess.Popen(
+                ["xdg-open", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except OSError:
+            pass
+    return False
 
 
 def _run_server(flask_app, host: str, port: int) -> None:

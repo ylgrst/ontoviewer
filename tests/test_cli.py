@@ -29,6 +29,25 @@ def test_browser_url_uses_loopback_for_wildcard_host() -> None:
     assert cli._browser_url("::", 8080) == "http://localhost:8080"
 
 
+def test_launch_browser_uses_windows_startfile_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: dict[str, str] = {}
+
+    monkeypatch.setattr(cli.webbrowser, "open_new_tab", lambda url: False)
+    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cli, "sys", type("FakeSys", (), {"platform": "win32"})())
+    monkeypatch.setattr(
+        cli.os,
+        "startfile",
+        lambda url: opened.setdefault("url", url),
+        raising=False,
+    )
+
+    assert cli._launch_browser("http://127.0.0.1:18000") is True
+    assert opened["url"] == "http://127.0.0.1:18000"
+
+
 def test_serve_reports_actual_fallback_port(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
