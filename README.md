@@ -215,6 +215,8 @@ ontoviewer serve --host 127.0.0.1 --port 8000
 
 OntoViewer now tries the requested port first and, if needed, automatically falls back to other common local ports such as `8080`, `18000`, `3000`, `5000`, and `8765`.
 
+This automatic fallback is enabled by default through `--auto-port`.
+
 If a fallback port is used:
 - OntoViewer prints the final URL clearly in the terminal
 - OntoViewer opens that exact URL in your default browser by default
@@ -224,6 +226,12 @@ If you prefer choosing a port yourself, common alternatives are:
 ```bash
 ontoviewer serve --host 127.0.0.1 --port 8080
 ontoviewer serve --host 127.0.0.1 --port 18000
+```
+
+If you want OntoViewer to fail instead of choosing another port automatically:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8000 --strict-port
 ```
 
 If you do not want the browser to open automatically:
