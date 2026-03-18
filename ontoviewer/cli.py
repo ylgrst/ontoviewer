@@ -202,16 +202,21 @@ def _browser_url(host: str, port: int) -> str:
 def _launch_browser(url: str) -> bool:
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        try:
-            subprocess.Popen(
-                ["cmd.exe", "/c", "start", "", url],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
-            return True
-        except OSError:
-            pass
+        for command in (
+            ["cmd.exe", "/c", "start", "", url],
+            ["explorer.exe", url],
+            ["rundll32.exe", "url.dll,FileProtocolHandler", url],
+        ):
+            try:
+                subprocess.Popen(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                )
+                return True
+            except OSError:
+                pass
 
         startfile = getattr(os, "startfile", None)
         if startfile is not None:

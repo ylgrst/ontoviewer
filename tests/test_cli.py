@@ -53,6 +53,31 @@ def test_launch_browser_uses_windows_cmd_start_fallback(
     assert opened["args"] == ["cmd.exe", "/c", "start", "", "http://127.0.0.1:18000"]
 
 
+def test_launch_browser_falls_back_to_windows_explorer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempted: list[list[str]] = []
+
+    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cli, "sys", type("FakeSys", (), {"platform": "win32"})())
+    monkeypatch.setattr(cli.webbrowser, "open_new_tab", lambda url: False)
+
+    def fake_popen(args, **kwargs):
+        attempted.append(args)
+        if args[0] == "cmd.exe":
+            raise OSError("start failed")
+        return object()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli.os, "startfile", lambda url: None, raising=False)
+
+    assert cli._launch_browser("http://127.0.0.1:18000") is True
+    assert attempted == [
+        ["cmd.exe", "/c", "start", "", "http://127.0.0.1:18000"],
+        ["explorer.exe", "http://127.0.0.1:18000"],
+    ]
+
+
 def test_serve_reports_actual_fallback_port(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
