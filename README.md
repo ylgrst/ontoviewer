@@ -213,7 +213,24 @@ Start the web UI:
 ontoviewer serve --host 127.0.0.1 --port 8000
 ```
 
-Then open `http://127.0.0.1:8000` in your browser.
+OntoViewer now tries the requested port first and, if needed, automatically falls back to other common local ports such as `8080`, `18000`, `3000`, `5000`, and `8765`.
+
+If a fallback port is used:
+- OntoViewer prints the final URL clearly in the terminal
+- OntoViewer opens that exact URL in your default browser by default
+
+If you prefer choosing a port yourself, common alternatives are:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8080
+ontoviewer serve --host 127.0.0.1 --port 18000
+```
+
+If you do not want the browser to open automatically:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8000 --no-open-browser
+```
 
 In the graph UI:
 - Use mouse wheel / trackpad to zoom.
