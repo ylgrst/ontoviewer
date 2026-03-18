@@ -29,14 +29,19 @@ def test_browser_url_uses_loopback_for_wildcard_host() -> None:
     assert cli._browser_url("::", 8080) == "http://localhost:8080"
 
 
-def test_launch_browser_uses_windows_startfile_fallback(
+def test_launch_browser_uses_windows_cmd_start_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    opened: dict[str, str] = {}
+    opened: dict[str, object] = {}
 
-    monkeypatch.setattr(cli.webbrowser, "open_new_tab", lambda url: False)
     monkeypatch.setattr(cli.os, "name", "nt", raising=False)
     monkeypatch.setattr(cli, "sys", type("FakeSys", (), {"platform": "win32"})())
+    monkeypatch.setattr(cli.webbrowser, "open_new_tab", lambda url: False)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "Popen",
+        lambda args, **kwargs: opened.setdefault("args", args),
+    )
     monkeypatch.setattr(
         cli.os,
         "startfile",
@@ -45,7 +50,7 @@ def test_launch_browser_uses_windows_startfile_fallback(
     )
 
     assert cli._launch_browser("http://127.0.0.1:18000") is True
-    assert opened["url"] == "http://127.0.0.1:18000"
+    assert opened["args"] == ["cmd.exe", "/c", "start", "", "http://127.0.0.1:18000"]
 
 
 def test_serve_reports_actual_fallback_port(
@@ -56,7 +61,11 @@ def test_serve_reports_actual_fallback_port(
 
     monkeypatch.setattr(ontoviewer.webapp, "create_app", lambda *, storage_dir: object())
     monkeypatch.setattr(cli, "_pick_serving_port", lambda host, port: 18000)
-    monkeypatch.setattr(cli, "_run_server", lambda flask_app, host, port: None)
+    monkeypatch.setattr(
+        cli,
+        "_run_server",
+        lambda flask_app, host, port, browser_url=None: None,
+    )
 
     result = runner.invoke(
         cli.app,
@@ -74,25 +83,21 @@ def test_serve_opens_browser_on_resolved_url(
     pytest.importorskip("flask")
     import ontoviewer.webapp
 
-    opened: dict[str, str] = {}
-
-    class ImmediateTimer:
-        def __init__(self, interval: float, function, args=None, kwargs=None):
-            self.function = function
-            self.args = tuple(args or ())
-            self.kwargs = dict(kwargs or {})
-            self.daemon = False
-
-        def start(self) -> None:
-            self.function(*self.args, **self.kwargs)
+    launched: dict[str, object] = {}
 
     monkeypatch.setattr(ontoviewer.webapp, "create_app", lambda *, storage_dir: object())
     monkeypatch.setattr(cli, "_pick_serving_port", lambda host, port: 18000)
-    monkeypatch.setattr(cli, "_run_server", lambda flask_app, host, port: None)
-    monkeypatch.setattr(cli.threading, "Timer", ImmediateTimer)
-    monkeypatch.setattr(cli, "_launch_browser", lambda url: opened.setdefault("url", url))
+    monkeypatch.setattr(
+        cli,
+        "_run_server",
+        lambda flask_app, host, port, browser_url=None: launched.update(
+            {"host": host, "port": port, "browser_url": browser_url}
+        ),
+    )
 
     result = runner.invoke(cli.app, ["serve", "--storage-dir", str(tmp_path / "storage")])
 
     assert result.exit_code == 0
-    assert opened["url"] == "http://127.0.0.1:18000"
+    assert launched["host"] == "127.0.0.1"
+    assert launched["port"] == 18000
+    assert launched["browser_url"] == "http://127.0.0.1:18000"

@@ -5,7 +5,6 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import threading
 from typing import Literal, Optional
 import webbrowser
 
@@ -139,13 +138,9 @@ def serve(
 
     url = _browser_url(host, actual_port)
     typer.echo(f"Starting OntoViewer web UI at {url}")
-    if open_browser:
-        timer = threading.Timer(1.0, _launch_browser, args=(url,))
-        timer.daemon = True
-        timer.start()
 
     try:
-        _run_server(flask_app, host, actual_port)
+        _run_server(flask_app, host, actual_port, browser_url=url if open_browser else None)
     except OSError as exc:
         typer.echo(f"Could not start the web UI on {host}:{actual_port}: {exc}", err=True)
         raise typer.Exit(code=1)
@@ -205,13 +200,19 @@ def _browser_url(host: str, port: int) -> str:
 
 
 def _launch_browser(url: str) -> bool:
-    try:
-        if webbrowser.open_new_tab(url):
-            return True
-    except Exception:
-        pass
-
     if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.Popen(
+                ["cmd.exe", "/c", "start", "", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+            return True
+        except OSError:
+            pass
+
         startfile = getattr(os, "startfile", None)
         if startfile is not None:
             try:
@@ -219,7 +220,14 @@ def _launch_browser(url: str) -> bool:
                 return True
             except OSError:
                 pass
-    elif sys.platform == "darwin":
+
+    try:
+        if webbrowser.open_new_tab(url):
+            return True
+    except Exception:
+        pass
+
+    if sys.platform == "darwin":
         try:
             subprocess.Popen(
                 ["open", url],
@@ -242,11 +250,16 @@ def _launch_browser(url: str) -> bool:
     return False
 
 
-def _run_server(flask_app, host: str, port: int) -> None:
+def _run_server(flask_app, host: str, port: int, browser_url: Optional[str] = None) -> None:
     from werkzeug.serving import make_server
 
     server = make_server(host, port, flask_app, threaded=True)
     try:
+        if browser_url and not _launch_browser(browser_url):
+            typer.echo(
+                f"Could not open the browser automatically. Open {browser_url} manually.",
+                err=True,
+            )
         server.serve_forever()
     finally:
         server.server_close()
