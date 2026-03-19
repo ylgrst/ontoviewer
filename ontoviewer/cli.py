@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import locale
 import os
 from pathlib import Path
 import socket
@@ -15,6 +16,7 @@ from ontoviewer.visualize import render_interactive_graph
 
 app = typer.Typer(help="Interactive ontology visualizer for OWL/RDF ontologies.")
 COMMON_WEB_PORTS = (8080, 18000, 3000, 5000, 8765)
+UTF8_REEXEC_ENV = "ONTOVIEWER_UTF8_REEXEC"
 
 
 @app.command("render")
@@ -53,6 +55,7 @@ def render(
     ),
 ) -> None:
     """Render an interactive graph from a local ontology file."""
+    _ensure_utf8_mode()
     closure = load_ontology_closure(
         ontology_file,
         max_depth=max_depth,
@@ -104,6 +107,7 @@ def serve(
     ),
 ) -> None:
     """Run a local web UI for uploading and visualizing ontologies."""
+    _ensure_utf8_mode()
     try:
         from ontoviewer.webapp import create_app
     except ModuleNotFoundError as exc:
@@ -157,6 +161,27 @@ def _candidate_ports(preferred_port: int) -> list[int]:
             deduped.append(candidate)
             seen.add(candidate)
     return deduped
+
+
+def _ensure_utf8_mode() -> None:
+    if not _should_reexec_with_utf8():
+        return
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env[UTF8_REEXEC_ENV] = "1"
+    os.execvpe(sys.executable, [sys.executable, "-m", "ontoviewer.cli", *sys.argv[1:]], env)
+
+
+def _should_reexec_with_utf8() -> bool:
+    if os.name != "nt":
+        return False
+    if getattr(sys.flags, "utf8_mode", 0) == 1:
+        return False
+    if os.environ.get(UTF8_REEXEC_ENV) == "1":
+        return False
+    preferred_encoding = locale.getpreferredencoding(False)
+    return preferred_encoding.lower() != "utf-8"
 
 
 def _pick_serving_port(host: str, preferred_port: int) -> Optional[int]:

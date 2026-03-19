@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,55 @@ def test_pick_serving_port_uses_first_available_fallback(monkeypatch: pytest.Mon
 def test_browser_url_uses_loopback_for_wildcard_host() -> None:
     assert cli._browser_url("0.0.0.0", 8080) == "http://127.0.0.1:8080"
     assert cli._browser_url("::", 8080) == "http://localhost:8080"
+
+
+def test_should_reexec_with_utf8_on_windows_legacy_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cli, "sys", SimpleNamespace(flags=SimpleNamespace(utf8_mode=0)))
+    monkeypatch.delenv(cli.UTF8_REEXEC_ENV, raising=False)
+    monkeypatch.setattr(cli.locale, "getpreferredencoding", lambda do_setlocale=False: "cp1252")
+
+    assert cli._should_reexec_with_utf8() is True
+
+
+def test_ensure_utf8_mode_reexecs_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    invoked: dict[str, object] = {}
+
+    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "sys",
+        SimpleNamespace(
+            executable="C:/Python/python.exe",
+            argv=["ontoviewer", "serve", "--port", "8000"],
+            flags=SimpleNamespace(utf8_mode=0),
+        ),
+    )
+    monkeypatch.delenv(cli.UTF8_REEXEC_ENV, raising=False)
+    monkeypatch.setattr(cli.locale, "getpreferredencoding", lambda do_setlocale=False: "cp1252")
+    monkeypatch.setattr(
+        cli.os,
+        "execvpe",
+        lambda executable, argv, env: invoked.update(
+            {"executable": executable, "argv": argv, "env": env}
+        ),
+    )
+
+    cli._ensure_utf8_mode()
+
+    assert invoked["executable"] == "C:/Python/python.exe"
+    assert invoked["argv"] == [
+        "C:/Python/python.exe",
+        "-m",
+        "ontoviewer.cli",
+        "serve",
+        "--port",
+        "8000",
+    ]
+    assert invoked["env"]["PYTHONUTF8"] == "1"
+    assert invoked["env"][cli.UTF8_REEXEC_ENV] == "1"
 
 
 def test_launch_browser_uses_windows_cmd_start_fallback(
