@@ -11,12 +11,15 @@ import webbrowser
 
 import typer
 
+from ontoviewer import __version__
 from ontoviewer.loader import load_ontology_closure
+from ontoviewer.update_check import update_notice
 from ontoviewer.visualize import render_interactive_graph
 
 app = typer.Typer(help="Interactive ontology visualizer for OWL/RDF ontologies.")
 COMMON_WEB_PORTS = (8080, 18000, 3000, 5000, 8765)
 UTF8_REEXEC_ENV = "ONTOVIEWER_UTF8_REEXEC"
+DISABLE_UPDATE_CHECK_ENV = "ONTOVIEWER_DISABLE_UPDATE_CHECK"
 
 
 @app.command("render")
@@ -53,9 +56,15 @@ def render(
             "Use only for trusted ontology hosts."
         ),
     ),
+    check_updates: bool = typer.Option(
+        True,
+        "--check-updates/--no-check-updates",
+        help="Check GitHub releases once per day and print a notice when a newer OntoViewer version is available.",
+    ),
 ) -> None:
     """Render an interactive graph from a local ontology file."""
     _ensure_utf8_mode()
+    _print_update_notice("cli", enabled=check_updates)
     closure = load_ontology_closure(
         ontology_file,
         max_depth=max_depth,
@@ -105,9 +114,15 @@ def serve(
         "--open-browser/--no-open-browser",
         help="Open the web UI in the default browser after the server starts. Disable on remote or headless machines.",
     ),
+    check_updates: bool = typer.Option(
+        True,
+        "--check-updates/--no-check-updates",
+        help="Check GitHub releases once per day and print a notice when a newer OntoViewer version is available.",
+    ),
 ) -> None:
     """Run a local web UI for uploading and visualizing ontologies."""
     _ensure_utf8_mode()
+    _print_update_notice("web", enabled=check_updates)
     try:
         from ontoviewer.webapp import create_app
     except ModuleNotFoundError as exc:
@@ -189,6 +204,19 @@ def _pick_serving_port(host: str, preferred_port: int) -> Optional[int]:
         if _port_is_available(host, candidate):
             return candidate
     return None
+
+
+def _print_update_notice(usage: Literal["web", "cli"], *, enabled: bool) -> None:
+    if not enabled or os.environ.get(DISABLE_UPDATE_CHECK_ENV) == "1":
+        return
+
+    try:
+        notice = update_notice(current_version=__version__, usage=usage)
+    except Exception:
+        return
+
+    if notice:
+        typer.secho(notice, fg=typer.colors.YELLOW, err=True)
 
 
 def _port_is_available(host: str, port: int) -> bool:

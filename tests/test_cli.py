@@ -30,6 +30,38 @@ def test_browser_url_uses_loopback_for_wildcard_host() -> None:
     assert cli._browser_url("::", 8080) == "http://localhost:8080"
 
 
+def test_print_update_notice_emits_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitted: dict[str, object] = {}
+
+    monkeypatch.delenv(cli.DISABLE_UPDATE_CHECK_ENV, raising=False)
+    monkeypatch.setattr(cli, "update_notice", lambda **kwargs: "Update available")
+    monkeypatch.setattr(
+        cli.typer,
+        "secho",
+        lambda message, **kwargs: emitted.update({"message": message, "kwargs": kwargs}),
+    )
+
+    cli._print_update_notice("web", enabled=True)
+
+    assert emitted["message"] == "Update available"
+    assert emitted["kwargs"]["err"] is True
+
+
+def test_print_update_notice_respects_disable_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: dict[str, bool] = {}
+
+    monkeypatch.setenv(cli.DISABLE_UPDATE_CHECK_ENV, "1")
+    monkeypatch.setattr(
+        cli,
+        "update_notice",
+        lambda **kwargs: called.setdefault("called", True),
+    )
+
+    cli._print_update_notice("cli", enabled=True)
+
+    assert "called" not in called
+
+
 def test_should_reexec_with_utf8_on_windows_legacy_encoding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

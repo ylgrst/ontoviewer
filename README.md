@@ -203,6 +203,13 @@ If `pip` says everything is already installed but you still want to force a refr
 python -m pip install --upgrade --force-reinstall "ontoviewer[web] @ git+https://github.com/ylgrst/ontoviewer.git"
 ```
 
+OntoViewer also performs a lightweight GitHub release check on `ontoviewer serve` and `ontoviewer render`.
+- It checks at most once per day thanks to a local cache.
+- It prints a manual upgrade command when a newer tagged release is available.
+- It does not update your environment automatically.
+- Disable it per command with `--no-check-updates`.
+- Disable it globally for a session with `ONTOVIEWER_DISABLE_UPDATE_CHECK=1`.
+
 ## Usage
 
 ### Local Web UI
@@ -212,6 +219,8 @@ Start the web UI:
 ```bash
 ontoviewer serve --host 127.0.0.1 --port 8000
 ```
+
+By default, `serve` also checks GitHub releases once per day and prints an upgrade notice if a newer tagged version is available.
 
 OntoViewer now tries the requested port first and, if needed, automatically falls back to other common local ports such as `8080`, `18000`, `3000`, `5000`, and `8765`.
 
@@ -238,6 +247,12 @@ If you do not want the browser to open automatically:
 
 ```bash
 ontoviewer serve --host 127.0.0.1 --port 8000 --no-open-browser
+```
+
+If you do not want the release check for this command:
+
+```bash
+ontoviewer serve --host 127.0.0.1 --port 8000 --no-check-updates
 ```
 
 In the graph UI:
@@ -279,6 +294,7 @@ Options:
 - `--format`: force parser format (example: `xml`, `turtle`, `n3`, `nt`).
 - `--label-mode`: initial display mode for class/property labels (`human` or `raw`).
 - `--allow-insecure-ssl`: retry remote imports without certificate verification when a remote host presents a broken or expired certificate.
+- `--check-updates/--no-check-updates`: enable or disable the lightweight GitHub release check for that command.
 
 After the command runs, open the generated HTML file in a browser.
 The CLI summary includes loaded ontologies, total ontology references, and unresolved imports.
