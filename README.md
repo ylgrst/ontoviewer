@@ -244,6 +244,7 @@ In the graph UI:
 - Use mouse wheel / trackpad to zoom.
 - Drag background to pan.
 - Use **Graph view / Family tree view** to switch layouts in the same rendered page.
+- Use **Show relation edges / Hide relation edges** in either view. Graph view shows them by default; family-tree view starts with them hidden for readability.
 - Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
 - Use the search bar to find node labels, then jump between matches with the left/right arrows.
 - Use **Attach ontology nodes / Detach ontology nodes** to switch between ontology-anchored and free class layouts.
@@ -294,6 +295,7 @@ Layout behavior:
 - In family-tree view, classes are arranged by hierarchy level so daughter classes descend from their mother class.
 - In family-tree view, imported ontologies sit above the ontologies that import them, so dependency chains flow downward.
 - In family-tree view, nodes are rendered as labeled boxes and edges use orthogonal routing for a more tree-like structure.
+- Property relation edge visibility can be toggled independently in graph view and family-tree view.
 
 ## Project layout
 

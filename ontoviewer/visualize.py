@@ -788,7 +788,7 @@ html, body {{
   <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button id="ontoviewer-collapse-toggle" onclick="window.ontoviewerToggleCollapseAll()">Collapse by ontology</button>
-  <button id="ontoviewer-property-toggle" onclick="window.ontoviewerToggleTreeRelations()">Show relation edges</button>
+  <button id="ontoviewer-property-toggle" onclick="window.ontoviewerToggleTreeRelations()">Hide relation edges</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
   <hr />
   <div class="ontoviewer-legend-title">Legend</div>
@@ -823,6 +823,7 @@ html, body {{
   let viewMode = "graph";
   let graphOntologyAttached = false;
   let ontologyAttached = false;
+  let graphPropertyEdgesVisible = true;
   let treePropertyEdgesVisible = false;
   let themeMode = getInitialThemeMode();
   const graphViewOptions = {{
@@ -899,7 +900,11 @@ html, body {{
   }}
 
   function propertyToggleText() {{
-    return treePropertyEdgesVisible ? "Hide relation edges" : "Show relation edges";
+    return currentPropertyEdgesVisible() ? "Hide relation edges" : "Show relation edges";
+  }}
+
+  function currentPropertyEdgesVisible() {{
+    return viewMode === "graph" ? graphPropertyEdgesVisible : treePropertyEdgesVisible;
   }}
 
   function themeToggleText(mode) {{
@@ -1079,7 +1084,7 @@ html, body {{
       return;
     }}
     propertyBtn.textContent = propertyToggleText();
-    propertyBtn.style.display = viewMode === "tree" ? "inline-block" : "none";
+    propertyBtn.style.display = "inline-block";
   }}
 
   function isEmbeddedPreview() {{
@@ -1680,7 +1685,7 @@ html, body {{
         nextHidden = !ontologyAttached || hiddenIds.has(edge.to);
       }} else if (edge.edgeType === "property") {{
         nextHidden = hiddenIds.has(edge.from) || hiddenIds.has(edge.to);
-        if (viewMode === "tree" && !treePropertyEdgesVisible) {{
+        if (!currentPropertyEdgesVisible()) {{
           nextHidden = true;
         }}
       }} else {{
@@ -1765,10 +1770,11 @@ html, body {{
   }};
 
   window.ontoviewerToggleTreeRelations = function() {{
-    if (viewMode !== "tree") {{
-      return;
+    if (viewMode === "graph") {{
+      graphPropertyEdgesVisible = !graphPropertyEdgesVisible;
+    }} else {{
+      treePropertyEdgesVisible = !treePropertyEdgesVisible;
     }}
-    treePropertyEdgesVisible = !treePropertyEdgesVisible;
     refreshPropertyToggle();
     refreshEdgeVisibility();
   }};

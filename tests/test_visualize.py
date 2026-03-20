@@ -85,6 +85,10 @@ ex:ChildClass a owl:Class ;
     assert 'postMessage({ type: "ontoviewer-theme"' in html
     assert "openOntologyClusters(false)" in html
     assert "ontoviewerToggleTreeRelations()" in html
+    assert "let graphPropertyEdgesVisible = true;" in html
+    assert "let treePropertyEdgesVisible = false;" in html
+    assert "return viewMode === \"graph\" ? graphPropertyEdgesVisible : treePropertyEdgesVisible;" in html
+    assert 'propertyBtn.style.display = "inline-block";' in html
     assert "imports" in html
 
 
