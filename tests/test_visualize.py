@@ -10,6 +10,7 @@ pytest.importorskip("pyvis")
 from ontoviewer.loader import load_ontology_closure
 from ontoviewer.visualize import Network
 from ontoviewer.visualize import render_interactive_graph
+from ontoviewer.visualize import _stable_ontology_colors
 
 
 def test_rendered_html_includes_family_tree_controls(tmp_path: Path) -> None:
@@ -66,15 +67,25 @@ ex:ChildClass a owl:Class ;
     assert "reapplyCollapsedOntologyGroups()" in html
     assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
-    assert "levelSeparation: 140" in html
-    assert 'direction: "UD"' in html
-    assert 'type: "vertical"' in html
-    assert "roundness: 0" in html
+    assert "const savedGraphPositions = new Map();" in html
+    assert "saveCurrentGraphPositions()" in html
+    assert "treeX" in html
+    assert "treeY" in html
+    assert "treeOnly" in html
+    assert "treeSemanticType" in html
+    assert "ontology imports ontology edge" in html
+    assert "ontology defines root class edge" in html
+    assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
+    assert "setTreeHoverState" in html
+    assert 'hierarchical: false' in html
+    assert 'smooth: false' in html
     assert "treeFrom" in html
     assert "wrapTreeLabel" in html
     assert "hideLoadingBar" in html
     assert "refreshAfterClassToggle" in html
     assert 'network.on("selectNode"' in html
+    assert 'network.on("hoverNode"' in html
+    assert 'network.on("blurNode"' in html
     assert 'network.on("stabilized"' in html
     assert 'network.on("animationFinished"' in html
     assert "network.stopSimulation()" in html
@@ -121,3 +132,17 @@ ex:Classe a owl:Class ;
 
     html = output_file.read_text(encoding="utf-8")
     assert json.dumps("Température µm")[1:-1] in html
+
+
+def test_stable_ontology_colors_are_deterministic_and_distinct() -> None:
+    ontology_ids = [
+        "http://example.org/ontology/a",
+        "http://example.org/ontology/b",
+        "http://example.org/ontology/c",
+    ]
+    first_mapping = _stable_ontology_colors(ontology_ids)
+    second_mapping = _stable_ontology_colors(list(reversed(ontology_ids)))
+
+    assert first_mapping == second_mapping
+    assert len(set(first_mapping.values())) == len(ontology_ids)
+    assert all(color.startswith("#") and len(color) == 7 for color in first_mapping.values())
