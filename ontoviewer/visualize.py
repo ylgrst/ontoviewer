@@ -244,6 +244,11 @@ def render_interactive_graph(
         class_owner=class_owner,
         class_display_labels=class_display_labels,
     )
+    displayed_tree_children: Dict[str, list[str]] = {cls: [] for cls in class_nodes}
+    for parent_id, child_ids in tree_rows:
+        if parent_id not in class_nodes:
+            continue
+        displayed_tree_children[parent_id] = [child_id for child_id in child_ids if child_id in class_nodes]
 
     for cls in class_nodes:
         owner = class_owner.get(cls, closure.root_iri)
@@ -270,6 +275,7 @@ def render_interactive_graph(
             level=class_level.get(cls, 1),
             treeX=tree_positions.get(cls, (0.0, 0.0))[0],
             treeY=tree_positions.get(cls, (0.0, 0.0))[1],
+            treeChildren=displayed_tree_children.get(cls, []),
         )
         if owner and cls in root_classes:
             net.add_edge(
@@ -1900,7 +1906,7 @@ html, body {{
             margin: 10,
             borderWidth: 1.5,
             widthConstraint: {{ maximum: 220 }},
-            hidden: false,
+            hidden: Boolean(node.hidden),
             x: node.treeX,
             y: node.treeY,
             fixed: {{ x: true, y: true }},
@@ -2093,6 +2099,21 @@ html, body {{
     return childrenByParent;
   }}
 
+  function treeChildrenMap() {{
+    const childrenByParent = new Map();
+    network.body.data.nodes.forEach((node) => {{
+      if (!node.isClassNode || !Array.isArray(node.treeChildren) || node.treeChildren.length === 0) {{
+        return;
+      }}
+      childrenByParent.set(node.id, node.treeChildren.slice());
+    }});
+    return childrenByParent;
+  }}
+
+  function activeChildrenMap() {{
+    return viewMode === "tree" ? treeChildrenMap() : subclassChildrenMap();
+  }}
+
   function descendantClassIds(parentNodeId, childrenByParent, visited) {{
     const descendants = [];
     const directChildren = childrenByParent.get(parentNodeId) || [];
@@ -2108,7 +2129,7 @@ html, body {{
   }}
 
   function hiddenClassIds() {{
-    const childrenByParent = subclassChildrenMap();
+    const childrenByParent = activeChildrenMap();
     const hiddenIds = new Set();
     collapsedClassNodes.forEach((parentNodeId) => {{
       descendantClassIds(parentNodeId, childrenByParent, new Set()).forEach((nodeId) => {{
@@ -2122,7 +2143,7 @@ html, body {{
     if (!collapsedClassNodes.has(nodeId)) {{
       return 0;
     }}
-    return descendantClassIds(nodeId, subclassChildrenMap(), new Set()).length;
+    return descendantClassIds(nodeId, activeChildrenMap(), new Set()).length;
   }}
 
   function nodeBaseLabel(node, mode) {{
@@ -2256,6 +2277,8 @@ html, body {{
 
   function refreshAfterClassToggle() {{
     if (viewMode === "tree") {{
+      const currentScale = network.getScale();
+      const currentPosition = network.getViewPosition();
       network.stopSimulation();
       network.setOptions(treeViewOptions);
       applyEdgeOrientation("tree");
@@ -2263,7 +2286,11 @@ html, body {{
       setTreeHoverState(hoveredTreeNodeId);
       refreshSearchHighlight();
       network.redraw();
-      network.fit({{ animation: true }});
+      network.moveTo({{
+        position: currentPosition,
+        scale: currentScale,
+        animation: false
+      }});
       scheduleLoadingBarHide(0);
       return;
     }}
@@ -2272,7 +2299,7 @@ html, body {{
   }}
 
   function expandCollapsedAncestorsForNode(nodeId) {{
-    const childrenByParent = subclassChildrenMap();
+    const childrenByParent = activeChildrenMap();
     let changed = false;
     Array.from(collapsedClassNodes).forEach((parentNodeId) => {{
       if (parentNodeId === nodeId) {{
@@ -2419,11 +2446,13 @@ html, body {{
         }}
         const helperFrom = network.body.data.nodes.get(edge.from);
         const helperTo = network.body.data.nodes.get(edge.to);
+        const targets = Array.isArray(edge.treeHighlightTargets) ? edge.treeHighlightTargets : [];
         if (
           hiddenIds.has(edge.from) ||
           hiddenIds.has(edge.to) ||
           (helperFrom && helperFrom.isClassNode && hiddenIds.has(helperFrom.id)) ||
-          (helperTo && helperTo.isClassNode && hiddenIds.has(helperTo.id))
+          (helperTo && helperTo.isClassNode && hiddenIds.has(helperTo.id)) ||
+          (targets.length > 0 && targets.every((targetId) => hiddenIds.has(targetId)))
         ) {{
           nextHidden = true;
         }}
@@ -2610,7 +2639,7 @@ html, body {{
     if (!node || !node.isClassNode) {{
       return false;
     }}
-    const descendantCount = descendantClassIds(nodeId, subclassChildrenMap(), new Set()).length;
+    const descendantCount = descendantClassIds(nodeId, activeChildrenMap(), new Set()).length;
     if (descendantCount === 0) {{
       return false;
     }}

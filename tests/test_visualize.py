@@ -79,6 +79,10 @@ ex:ChildClass a owl:Class ;
     assert "treeOnly" in html
     assert "treeSemanticType" in html
     assert "treeOntologyGroup" in html
+    assert "treeChildren" in html
+    assert "function treeChildrenMap()" in html
+    assert "function activeChildrenMap()" in html
+    assert "hidden: Boolean(node.hidden)" in html
     assert "ontology imports ontology edge" in html
     assert "ontology defines root class edge" in html
     assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
@@ -116,6 +120,10 @@ ex:ChildClass a owl:Class ;
     assert '"enabled": false' in html or "enabled: false" in html
     assert "network.stopSimulation();" in html
     assert "network.redraw();" in html
+    assert "targets.every((targetId) => hiddenIds.has(targetId))" in html
+    assert "const currentScale = network.getScale();" in html
+    assert "const currentPosition = network.getViewPosition();" in html
+    assert "network.moveTo({" in html
     assert "imports" in html
 
 
