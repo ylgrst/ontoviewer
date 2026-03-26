@@ -56,7 +56,7 @@ TREE_SIBLING_GAP = 48.0
 TREE_LEVEL_GAP = 108.0
 TREE_ROW_GAP = 76.0
 TREE_CHILDREN_PER_ROW = 4
-TREE_ROOTS_PER_ROW = 2
+TREE_ROOTS_PER_ROW = 4
 TREE_ONTOLOGY_GAP = 170.0
 TREE_CONNECTOR_GAP = 18.0
 TREE_ARROW_TAIL = 18.0
@@ -671,11 +671,6 @@ def _compute_tree_layout(
     for cls in class_nodes:
         node_widths[cls] = TREE_CLASS_NODE_WIDTH
 
-    row_limits = {
-        f"ont:{iri}": min(6, max(TREE_ROOTS_PER_ROW, int(len(ontology_roots[iri]) ** 0.5) + 1))
-        for iri in ontology_ids
-    }
-
     def layout_subtree(node_id: str) -> dict:
         child_ids = children_by_parent.get(node_id, [])
         node_width = node_widths.get(node_id, TREE_CLASS_NODE_WIDTH)
@@ -693,40 +688,29 @@ def _compute_tree_layout(
             }
 
         child_layouts = [layout_subtree(child_id) for child_id in child_ids]
-        row_limit = row_limits.get(node_id, TREE_CHILDREN_PER_ROW)
-        child_rows = [
-            child_layouts[index : index + row_limit]
-            for index in range(0, len(child_layouts), row_limit)
-        ]
-        row_widths = [
-            sum(layout["width"] for layout in row) + TREE_SIBLING_GAP * max(len(row) - 1, 0)
-            for row in child_rows
-        ]
-        subtree_width = max([node_width, *row_widths])
+        row_width = (
+            sum(layout["width"] for layout in child_layouts)
+            + TREE_SIBLING_GAP * max(len(child_layouts) - 1, 0)
+        )
+        subtree_width = max(node_width, row_width)
 
         next_top = TREE_NODE_HEIGHT + TREE_LEVEL_GAP
         total_height = TREE_NODE_HEIGHT
         all_rows = rows
+        row_height = max(layout["height"] for layout in child_layouts)
+        start_x = (subtree_width - row_width) / 2.0
+        child_ids_for_row: list[str] = []
+        cursor_x = start_x
 
-        for row in child_rows:
-            row_width = (
-                sum(layout["width"] for layout in row) + TREE_SIBLING_GAP * max(len(row) - 1, 0)
-            )
-            row_height = max(layout["height"] for layout in row)
-            start_x = (subtree_width - row_width) / 2.0
-            child_ids_for_row: list[str] = []
-            cursor_x = start_x
+        for child_layout in child_layouts:
+            child_ids_for_row.append(child_layout["root_id"])
+            for descendant_id, (pos_x, pos_y) in child_layout["positions"].items():
+                positions[descendant_id] = (cursor_x + pos_x, next_top + pos_y)
+            all_rows.extend(child_layout["rows"])
+            cursor_x += child_layout["width"] + TREE_SIBLING_GAP
 
-            for child_layout in row:
-                child_ids_for_row.append(child_layout["root_id"])
-                for descendant_id, (pos_x, pos_y) in child_layout["positions"].items():
-                    positions[descendant_id] = (cursor_x + pos_x, next_top + pos_y)
-                all_rows.extend(child_layout["rows"])
-                cursor_x += child_layout["width"] + TREE_SIBLING_GAP
-
-            all_rows.append((node_id, tuple(child_ids_for_row)))
-            total_height = max(total_height, next_top + row_height)
-            next_top += row_height + TREE_ROW_GAP
+        all_rows.append((node_id, tuple(child_ids_for_row)))
+        total_height = max(total_height, next_top + row_height)
 
         return {
             "root_id": node_id,
@@ -1411,6 +1395,7 @@ html, body {{
   let ontologyAttached = false;
   let graphPropertyEdgesVisible = true;
   let treePropertyEdgesVisible = false;
+  let treeMembershipEdgesVisible = true;
   let themeMode = getInitialThemeMode();
   const savedGraphPositions = new Map();
   let hoveredTreeNodeId = null;
@@ -2352,6 +2337,8 @@ html, body {{
           nextHidden = true;
         }} else if (edge.treeSemanticType === "property") {{
           nextHidden = !currentPropertyEdgesVisible();
+        }} else if (edge.treeSemanticType === "ontology-membership") {{
+          nextHidden = !treeMembershipEdgesVisible;
         }} else {{
           nextHidden = false;
         }}

@@ -9,6 +9,7 @@ pytest.importorskip("pyvis")
 
 from ontoviewer.loader import load_ontology_closure
 from ontoviewer.visualize import Network
+from ontoviewer.visualize import _compute_tree_layout
 from ontoviewer.visualize import render_interactive_graph
 from ontoviewer.visualize import _stable_ontology_colors
 
@@ -76,6 +77,7 @@ ex:ChildClass a owl:Class ;
     assert "ontology imports ontology edge" in html
     assert "ontology defines root class edge" in html
     assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
+    assert "Family-tree view hides relation edges by default so the hierarchy stays readable." in html
     assert "setTreeHoverState" in html
     assert 'hierarchical: false' in html
     assert 'smooth: false' in html
@@ -98,6 +100,7 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleTreeRelations()" in html
     assert "let graphPropertyEdgesVisible = true;" in html
     assert "let treePropertyEdgesVisible = false;" in html
+    assert "let treeMembershipEdgesVisible = true;" in html
     assert "return viewMode === \"graph\" ? graphPropertyEdgesVisible : treePropertyEdgesVisible;" in html
     assert 'propertyBtn.style.display = "inline-block";' in html
     assert "imports" in html
@@ -146,3 +149,24 @@ def test_stable_ontology_colors_are_deterministic_and_distinct() -> None:
     assert first_mapping == second_mapping
     assert len(set(first_mapping.values())) == len(ontology_ids)
     assert all(color.startswith("#") and len(color) == 7 for color in first_mapping.values())
+
+
+def test_tree_layout_keeps_siblings_on_one_line() -> None:
+    ontology_ids = ["http://example.org/root"]
+    class_nodes = {
+        "http://example.org/root#A",
+        "http://example.org/root#B",
+        "http://example.org/root#C",
+        "http://example.org/root#D",
+    }
+    tree_positions, _ = _compute_tree_layout(
+        ontology_ids=ontology_ids,
+        ontology_level={"http://example.org/root": 0},
+        class_nodes=class_nodes,
+        subclass_pairs=set(),
+        class_owner={cls: "http://example.org/root" for cls in class_nodes},
+        class_display_labels={cls: cls.rsplit("#", 1)[-1] for cls in class_nodes},
+    )
+
+    sibling_levels = {tree_positions[node_id][1] for node_id in class_nodes}
+    assert len(sibling_levels) == 1
