@@ -74,6 +74,7 @@ ex:ChildClass a owl:Class ;
     assert "treeY" in html
     assert "treeOnly" in html
     assert "treeSemanticType" in html
+    assert "treeOntologyGroup" in html
     assert "ontology imports ontology edge" in html
     assert "ontology defines root class edge" in html
     assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
@@ -103,6 +104,8 @@ ex:ChildClass a owl:Class ;
     assert "let treeMembershipEdgesVisible = true;" in html
     assert "return viewMode === \"graph\" ? graphPropertyEdgesVisible : treePropertyEdgesVisible;" in html
     assert 'propertyBtn.style.display = "inline-block";' in html
+    assert "collapsedOntologyGroups.has(edge.treeOntologyGroup)" in html
+    assert "if (viewMode !== \"tree\" && nodeOptions.isTreeHelperNode)" in html
     assert "imports" in html
 
 

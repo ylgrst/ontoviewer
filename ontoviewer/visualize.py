@@ -746,23 +746,32 @@ def _tree_box_half_height(node_id: str) -> float:
     return TREE_NODE_HEIGHT / 2.0
 
 
-def _add_tree_helper_node(net: Network, node_id: str, x: float, y: float) -> None:
-    net.add_node(
-        node_id,
-        label=" ",
-        title="",
-        shape="dot",
-        size=1,
-        color="rgba(0,0,0,0)",
-        borderWidth=0,
-        font={"size": 1, "color": "rgba(0,0,0,0)", "strokeWidth": 0},
-        physics=False,
-        hidden=True,
-        fixed=True,
-        isTreeHelperNode=True,
-        treeX=x,
-        treeY=y,
-    )
+def _add_tree_helper_node(
+    net: Network,
+    node_id: str,
+    x: float,
+    y: float,
+    *,
+    ontology_group_id: Optional[str] = None,
+) -> None:
+    node_kwargs = {
+        "label": " ",
+        "title": "",
+        "shape": "dot",
+        "size": 1,
+        "color": "rgba(0,0,0,0)",
+        "borderWidth": 0,
+        "font": {"size": 1, "color": "rgba(0,0,0,0)", "strokeWidth": 0},
+        "physics": False,
+        "hidden": True,
+        "fixed": True,
+        "isTreeHelperNode": True,
+        "treeX": x,
+        "treeY": y,
+    }
+    if ontology_group_id is not None:
+        node_kwargs["ontologyGroup"] = ontology_group_id
+    net.add_node(node_id, **node_kwargs)
 
 
 def _add_tree_helper_edge(
@@ -781,6 +790,7 @@ def _add_tree_helper_edge(
     raw_label: Optional[str] = None,
     title: Optional[str] = None,
     highlight_targets: tuple[str, ...] = (),
+    ontology_group_id: Optional[str] = None,
 ) -> None:
     net.add_edge(
         source,
@@ -802,6 +812,7 @@ def _add_tree_helper_edge(
         treeOnly=True,
         treeSemanticType=semantic_type,
         treeHighlightTargets=list(highlight_targets),
+        treeOntologyGroup=ontology_group_id,
     )
 
 
@@ -834,6 +845,7 @@ def _add_tree_structural_connectors(
         if not child_ids:
             continue
         parent_x, parent_y = tree_positions[parent_id]
+        ontology_group_id = _group_id(parent_id[4:]) if parent_id.startswith("ont:") else None
         child_y = min(tree_positions[child_id][1] for child_id in child_ids)
         parent_bottom_y = parent_y + _tree_box_half_height(parent_id)
         child_top_y = child_y - _tree_box_half_height(child_ids[0])
@@ -853,7 +865,7 @@ def _add_tree_structural_connectors(
             branch_y = min(preferred_branch_y, max_branch_y)
         trunk_id = f"treehelper:{helper_index}:trunk"
         helper_index += 1
-        _add_tree_helper_node(net, trunk_id, parent_x, branch_y)
+        _add_tree_helper_node(net, trunk_id, parent_x, branch_y, ontology_group_id=ontology_group_id)
         semantic_type = "ontology-membership" if parent_id.startswith("ont:") else "subclass"
         _add_tree_helper_edge(
             net,
@@ -865,6 +877,7 @@ def _add_tree_structural_connectors(
             color="#94a3b8" if semantic_type == "ontology-membership" else "#2563eb",
             dashes=semantic_type == "ontology-membership",
             highlight_targets=tuple(child_ids),
+            ontology_group_id=ontology_group_id,
         )
         helper_index += 1
 
@@ -875,7 +888,13 @@ def _add_tree_structural_connectors(
                 continue
             branch_id = f"treehelper:{helper_index}:branch"
             helper_index += 1
-            _add_tree_helper_node(net, branch_id, child_x, branch_y)
+            _add_tree_helper_node(
+                net,
+                branch_id,
+                child_x,
+                branch_y,
+                ontology_group_id=ontology_group_id,
+            )
             branch_nodes_by_x[child_x] = branch_id
 
         sorted_branch_x = sorted(branch_nodes_by_x)
@@ -890,6 +909,7 @@ def _add_tree_structural_connectors(
                 color="#94a3b8" if semantic_type == "ontology-membership" else "#2563eb",
                 dashes=semantic_type == "ontology-membership",
                 highlight_targets=tuple(child_ids),
+                ontology_group_id=ontology_group_id,
             )
             helper_index += 1
 
@@ -900,7 +920,13 @@ def _add_tree_structural_connectors(
             if child_drop_y > branch_y + 1:
                 drop_id = f"treehelper:{helper_index}:drop"
                 helper_index += 1
-                _add_tree_helper_node(net, drop_id, child_x, child_drop_y)
+                _add_tree_helper_node(
+                    net,
+                    drop_id,
+                    child_x,
+                    child_drop_y,
+                    ontology_group_id=ontology_group_id,
+                )
                 _add_tree_helper_edge(
                     net,
                     f"treeedge:{helper_index}:stem",
@@ -911,6 +937,7 @@ def _add_tree_structural_connectors(
                     color="#94a3b8" if semantic_type == "ontology-membership" else "#2563eb",
                     dashes=semantic_type == "ontology-membership",
                     highlight_targets=(child_id,),
+                    ontology_group_id=ontology_group_id,
                 )
                 helper_index += 1
                 start_node = drop_id
@@ -926,6 +953,7 @@ def _add_tree_structural_connectors(
                 arrow=True,
                 title="subClassOf" if semantic_type == "subclass" else "defined in ontology",
                 highlight_targets=(child_id,),
+                ontology_group_id=ontology_group_id,
             )
             helper_index += 1
 
@@ -1999,7 +2027,13 @@ html, body {{
     }});
     network.cluster({{
       joinCondition: function(nodeOptions) {{
-        return nodeOptions.ontologyGroup === groupId;
+        if (nodeOptions.ontologyGroup !== groupId) {{
+          return false;
+        }}
+        if (viewMode !== "tree" && nodeOptions.isTreeHelperNode) {{
+          return false;
+        }}
+        return true;
       }},
       clusterNodeProperties: {{
         id: clusterId,
@@ -2338,7 +2372,7 @@ html, body {{
         }} else if (edge.treeSemanticType === "property") {{
           nextHidden = !currentPropertyEdgesVisible();
         }} else if (edge.treeSemanticType === "ontology-membership") {{
-          nextHidden = !treeMembershipEdgesVisible;
+          nextHidden = !treeMembershipEdgesVisible || collapsedOntologyGroups.has(edge.treeOntologyGroup);
         }} else {{
           nextHidden = false;
         }}
