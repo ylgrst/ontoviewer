@@ -1724,6 +1724,25 @@ html, body {{
     }});
   }}
 
+  function savedGraphPositionForNode(node) {{
+    const directPosition = savedGraphPositions.get(node.id);
+    if (directPosition) {{
+      return directPosition;
+    }}
+    if (!node.ontologyGroup) {{
+      return null;
+    }}
+    const ontologyPosition = savedGraphPositions.get(node.ontologyGroup);
+    if (ontologyPosition) {{
+      return ontologyPosition;
+    }}
+    const collapsedOntologyPosition = savedGraphPositions.get(clusterIdFromGroup(node.ontologyGroup));
+    if (collapsedOntologyPosition) {{
+      return collapsedOntologyPosition;
+    }}
+    return null;
+  }}
+
   function clusterIdFromGroup(groupId) {{
     return "cluster:" + groupId;
   }}
@@ -1892,7 +1911,7 @@ html, body {{
             }}
           }});
         }} else {{
-          const savedGraphPos = savedGraphPositions.get(node.id);
+          const savedGraphPos = savedGraphPositionForNode(node);
           const graphNodeUpdate = {{
             id: node.id,
             hidden: false,
@@ -1936,7 +1955,7 @@ html, body {{
             }}
           }});
         }} else {{
-          const savedGraphPos = savedGraphPositions.get(node.id);
+          const savedGraphPos = savedGraphPositionForNode(node);
           const graphOntologyUpdate = {{
             id: node.id,
             shape: "box",
@@ -2018,6 +2037,10 @@ html, body {{
     const clusterId = clusterIdFromGroup(groupId);
     if (network.isCluster(clusterId)) {{
       return;
+    }}
+    if (viewMode === "graph") {{
+      // Keep graph coordinates for member nodes before replacing them with a cluster shell.
+      saveCurrentGraphPositions();
     }}
     let clusterColor = "#f3f4f6";
     network.body.data.nodes.forEach((node) => {{
@@ -2180,11 +2203,18 @@ html, body {{
   }}
 
   function applyViewMode(mode) {{
-    if (viewMode === "graph" && mode === "tree") {{
+    const previousViewMode = viewMode;
+    const switchingGraphToTree = previousViewMode === "graph" && mode === "tree";
+    const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";
+    if (switchingGraphToTree) {{
+      // Preserve current graph coordinates, including collapsed ontology shells.
       saveCurrentGraphPositions();
+      openOntologyClusters(false);
     }}
     viewMode = mode;
-    openOntologyClusters(false);
+    if (!switchingGraphToTree) {{
+      openOntologyClusters(false);
+    }}
     if (mode === "tree") {{
       network.stopSimulation();
       network.setOptions(treeViewOptions);
@@ -2204,7 +2234,18 @@ html, body {{
       applyLabelMode(labelMode);
       reapplyCollapsedOntologyGroups();
       setTreeHoverState(null);
-      network.stabilize(200);
+      if (switchingTreeToGraph) {{
+        network.setOptions({{
+          physics: {{
+            enabled: false
+          }}
+        }});
+        network.stopSimulation();
+        network.redraw();
+        scheduleLoadingBarHide(0);
+      }} else {{
+        network.stabilize(200);
+      }}
     }}
     viewModeButtonState(mode);
     refreshPropertyToggle();

@@ -70,6 +70,10 @@ ex:ChildClass a owl:Class ;
     assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "const savedGraphPositions = new Map();" in html
     assert "saveCurrentGraphPositions()" in html
+    assert "function savedGraphPositionForNode(node)" in html
+    assert 'const previousViewMode = viewMode;' in html
+    assert 'const switchingGraphToTree = previousViewMode === "graph" && mode === "tree";' in html
+    assert 'const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";' in html
     assert "treeX" in html
     assert "treeY" in html
     assert "treeOnly" in html
@@ -106,6 +110,12 @@ ex:ChildClass a owl:Class ;
     assert 'propertyBtn.style.display = "inline-block";' in html
     assert "collapsedOntologyGroups.has(edge.treeOntologyGroup)" in html
     assert "if (viewMode !== \"tree\" && nodeOptions.isTreeHelperNode)" in html
+    assert "openOntologyClusters(false);" in html
+    assert "if (viewMode === \"graph\")" in html
+    assert "saveCurrentGraphPositions();" in html
+    assert '"enabled": false' in html or "enabled: false" in html
+    assert "network.stopSimulation();" in html
+    assert "network.redraw();" in html
     assert "imports" in html
 
 
