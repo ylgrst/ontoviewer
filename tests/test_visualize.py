@@ -9,7 +9,9 @@ pytest.importorskip("pyvis")
 
 from ontoviewer.loader import load_ontology_closure
 from ontoviewer.visualize import Network
+from ontoviewer.visualize import _compute_tree_layout
 from ontoviewer.visualize import render_interactive_graph
+from ontoviewer.visualize import _stable_ontology_colors
 
 
 def test_rendered_html_includes_family_tree_controls(tmp_path: Path) -> None:
@@ -66,15 +68,38 @@ ex:ChildClass a owl:Class ;
     assert "reapplyCollapsedOntologyGroups()" in html
     assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
-    assert "levelSeparation: 140" in html
-    assert 'direction: "UD"' in html
-    assert 'type: "vertical"' in html
-    assert "roundness: 0" in html
+    assert "const savedGraphPositions = new Map();" in html
+    assert "let savedGraphViewport = null;" in html
+    assert "saveCurrentGraphPositions()" in html
+    assert "function saveCurrentGraphViewport()" in html
+    assert "function savedGraphPositionForNode(node)" in html
+    assert "function openOntologyCluster(clusterId)" in html
+    assert 'const previousViewMode = viewMode;' in html
+    assert 'const switchingGraphToTree = previousViewMode === "graph" && mode === "tree";' in html
+    assert 'const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";' in html
+    assert "treeX" in html
+    assert "treeY" in html
+    assert "treeOnly" in html
+    assert "treeSemanticType" in html
+    assert "treeOntologyGroup" in html
+    assert "treeChildren" in html
+    assert "function treeChildrenMap()" in html
+    assert "function activeChildrenMap()" in html
+    assert "hidden: Boolean(node.hidden)" in html
+    assert "ontology imports ontology edge" in html
+    assert "ontology defines root class edge" in html
+    assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
+    assert "Family-tree view hides relation edges by default so the hierarchy stays readable." in html
+    assert "setTreeHoverState" in html
+    assert 'hierarchical: false' in html
+    assert 'smooth: false' in html
     assert "treeFrom" in html
     assert "wrapTreeLabel" in html
     assert "hideLoadingBar" in html
     assert "refreshAfterClassToggle" in html
     assert 'network.on("selectNode"' in html
+    assert 'network.on("hoverNode"' in html
+    assert 'network.on("blurNode"' in html
     assert 'network.on("stabilized"' in html
     assert 'network.on("animationFinished"' in html
     assert "network.stopSimulation()" in html
@@ -87,8 +112,26 @@ ex:ChildClass a owl:Class ;
     assert "ontoviewerToggleTreeRelations()" in html
     assert "let graphPropertyEdgesVisible = true;" in html
     assert "let treePropertyEdgesVisible = false;" in html
+    assert "let treeMembershipEdgesVisible = true;" in html
     assert "return viewMode === \"graph\" ? graphPropertyEdgesVisible : treePropertyEdgesVisible;" in html
     assert 'propertyBtn.style.display = "inline-block";' in html
+    assert "collapsedOntologyGroups.has(edge.treeOntologyGroup)" in html
+    assert "if (viewMode !== \"tree\" && nodeOptions.isTreeHelperNode)" in html
+    assert "openOntologyClusters(false);" in html
+    assert "if (viewMode === \"graph\")" in html
+    assert "saveCurrentGraphViewport();" in html
+    assert "saveCurrentGraphPositions();" in html
+    assert '"enabled": false' in html or "enabled: false" in html
+    assert "network.stopSimulation();" in html
+    assert "network.redraw();" in html
+    assert "if (savedGraphViewport)" in html
+    assert "releaseFunction: function(clusterPosition, containedNodesPositions)" in html
+    assert "targets.every((targetId) => hiddenIds.has(targetId))" in html
+    assert "function refreshAfterOntologyToggle()" in html
+    assert html.count("const currentScale = network.getScale();") >= 3
+    assert html.count("const currentPosition = network.getViewPosition();") >= 3
+    assert html.count("network.moveTo({") >= 3
+    assert "clusterEdgeProperties: viewMode === \"tree\"" in html
     assert "imports" in html
 
 
@@ -121,3 +164,38 @@ ex:Classe a owl:Class ;
 
     html = output_file.read_text(encoding="utf-8")
     assert json.dumps("Température µm")[1:-1] in html
+
+
+def test_stable_ontology_colors_are_deterministic_and_distinct() -> None:
+    ontology_ids = [
+        "http://example.org/ontology/a",
+        "http://example.org/ontology/b",
+        "http://example.org/ontology/c",
+    ]
+    first_mapping = _stable_ontology_colors(ontology_ids)
+    second_mapping = _stable_ontology_colors(list(reversed(ontology_ids)))
+
+    assert first_mapping == second_mapping
+    assert len(set(first_mapping.values())) == len(ontology_ids)
+    assert all(color.startswith("#") and len(color) == 7 for color in first_mapping.values())
+
+
+def test_tree_layout_keeps_siblings_on_one_line() -> None:
+    ontology_ids = ["http://example.org/root"]
+    class_nodes = {
+        "http://example.org/root#A",
+        "http://example.org/root#B",
+        "http://example.org/root#C",
+        "http://example.org/root#D",
+    }
+    tree_positions, _ = _compute_tree_layout(
+        ontology_ids=ontology_ids,
+        ontology_level={"http://example.org/root": 0},
+        class_nodes=class_nodes,
+        subclass_pairs=set(),
+        class_owner={cls: "http://example.org/root" for cls in class_nodes},
+        class_display_labels={cls: cls.rsplit("#", 1)[-1] for cls in class_nodes},
+    )
+
+    sibling_levels = {tree_positions[node_id][1] for node_id in class_nodes}
+    assert len(sibling_levels) == 1
