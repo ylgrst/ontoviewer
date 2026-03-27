@@ -69,8 +69,11 @@ ex:ChildClass a owl:Class ;
     assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "const savedGraphPositions = new Map();" in html
+    assert "let savedGraphViewport = null;" in html
     assert "saveCurrentGraphPositions()" in html
+    assert "function saveCurrentGraphViewport()" in html
     assert "function savedGraphPositionForNode(node)" in html
+    assert "function openOntologyCluster(clusterId)" in html
     assert 'const previousViewMode = viewMode;' in html
     assert 'const switchingGraphToTree = previousViewMode === "graph" && mode === "tree";' in html
     assert 'const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";' in html
@@ -116,14 +119,19 @@ ex:ChildClass a owl:Class ;
     assert "if (viewMode !== \"tree\" && nodeOptions.isTreeHelperNode)" in html
     assert "openOntologyClusters(false);" in html
     assert "if (viewMode === \"graph\")" in html
+    assert "saveCurrentGraphViewport();" in html
     assert "saveCurrentGraphPositions();" in html
     assert '"enabled": false' in html or "enabled: false" in html
     assert "network.stopSimulation();" in html
     assert "network.redraw();" in html
+    assert "if (savedGraphViewport)" in html
+    assert "releaseFunction: function(clusterPosition, containedNodesPositions)" in html
     assert "targets.every((targetId) => hiddenIds.has(targetId))" in html
-    assert "const currentScale = network.getScale();" in html
-    assert "const currentPosition = network.getViewPosition();" in html
-    assert "network.moveTo({" in html
+    assert "function refreshAfterOntologyToggle()" in html
+    assert html.count("const currentScale = network.getScale();") >= 3
+    assert html.count("const currentPosition = network.getViewPosition();") >= 3
+    assert html.count("network.moveTo({") >= 3
+    assert "clusterEdgeProperties: viewMode === \"tree\"" in html
     assert "imports" in html
 
 

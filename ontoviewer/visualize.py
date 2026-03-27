@@ -852,6 +852,10 @@ def _add_tree_structural_connectors(
             continue
         parent_x, parent_y = tree_positions[parent_id]
         ontology_group_id = _group_id(parent_id[4:]) if parent_id.startswith("ont:") else None
+        if ontology_group_id is None:
+            parent_node = net.get_node(parent_id)
+            if parent_node is not None:
+                ontology_group_id = parent_node.get("ontologyGroup")
         child_y = min(tree_positions[child_id][1] for child_id in child_ids)
         parent_bottom_y = parent_y + _tree_box_half_height(parent_id)
         child_top_y = child_y - _tree_box_half_height(child_ids[0])
@@ -1432,6 +1436,7 @@ html, body {{
   let treeMembershipEdgesVisible = true;
   let themeMode = getInitialThemeMode();
   const savedGraphPositions = new Map();
+  let savedGraphViewport = null;
   let hoveredTreeNodeId = null;
   const graphViewOptions = {{
     interaction: {{
@@ -1730,6 +1735,13 @@ html, body {{
     }});
   }}
 
+  function saveCurrentGraphViewport() {{
+    savedGraphViewport = {{
+      position: network.getViewPosition(),
+      scale: network.getScale()
+    }};
+  }}
+
   function savedGraphPositionForNode(node) {{
     const directPosition = savedGraphPositions.get(node.id);
     if (directPosition) {{
@@ -1757,11 +1769,40 @@ html, body {{
     return clusterId.startsWith("cluster:") ? clusterId.slice("cluster:".length) : null;
   }}
 
+  function openOntologyCluster(clusterId) {{
+    if (!network.isCluster(clusterId)) {{
+      return;
+    }}
+    if (viewMode !== "graph") {{
+      network.openCluster(clusterId);
+      return;
+    }}
+    network.openCluster(clusterId, {{
+      releaseFunction: function(clusterPosition, containedNodesPositions) {{
+        const nextPositions = Object.assign({{}}, containedNodesPositions);
+        Object.keys(nextPositions).forEach((nodeId) => {{
+          const node = network.body.data.nodes.get(nodeId);
+          const savedPosition = node ? savedGraphPositionForNode(node) : null;
+          if (savedPosition) {{
+            nextPositions[nodeId] = {{
+              x: savedPosition.x,
+              y: savedPosition.y
+            }};
+          }} else {{
+            nextPositions[nodeId] = {{
+              x: clusterPosition.x,
+              y: clusterPosition.y
+            }};
+          }}
+        }});
+        return nextPositions;
+      }}
+    }});
+  }}
+
   function openOntologyClusters(clearTrackedGroups) {{
     Array.from(clusterIds).forEach((clusterId) => {{
-      if (network.isCluster(clusterId)) {{
-        network.openCluster(clusterId);
-      }}
+      openOntologyCluster(clusterId);
     }});
     clusterIds.clear();
     if (clearTrackedGroups) {{
@@ -1772,9 +1813,7 @@ html, body {{
 
   function expandOntologyGroup(groupId) {{
     const clusterId = clusterIdFromGroup(groupId);
-    if (network.isCluster(clusterId)) {{
-      network.openCluster(clusterId);
-    }}
+    openOntologyCluster(clusterId);
     clusterIds.delete(clusterId);
     collapsedOntologyGroups.delete(groupId);
     refreshCollapseToggle();
@@ -2075,7 +2114,13 @@ html, body {{
         font: {{
           color: themeFontColor()
         }}
-      }}
+      }},
+      clusterEdgeProperties: viewMode === "tree"
+        ? {{
+            hidden: true,
+            physics: false
+          }}
+        : undefined
     }});
     clusterIds.add(clusterId);
     collapsedOntologyGroups.add(groupId);
@@ -2229,6 +2274,7 @@ html, body {{
     const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";
     if (switchingGraphToTree) {{
       // Preserve current graph coordinates, including collapsed ontology shells.
+      saveCurrentGraphViewport();
       saveCurrentGraphPositions();
       openOntologyClusters(false);
     }}
@@ -2263,6 +2309,13 @@ html, body {{
         }});
         network.stopSimulation();
         network.redraw();
+        if (savedGraphViewport) {{
+          network.moveTo({{
+            position: savedGraphViewport.position,
+            scale: savedGraphViewport.scale,
+            animation: false
+          }});
+        }}
         scheduleLoadingBarHide(0);
       }} else {{
         network.stabilize(200);
@@ -2294,8 +2347,49 @@ html, body {{
       scheduleLoadingBarHide(0);
       return;
     }}
+    const currentScale = network.getScale();
+    const currentPosition = network.getViewPosition();
+    saveCurrentGraphViewport();
+    saveCurrentGraphPositions();
+    network.setOptions({{
+      physics: {{
+        enabled: false
+      }}
+    }});
     refreshSearchHighlight();
-    network.stabilize(80);
+    network.stopSimulation();
+    network.redraw();
+    network.moveTo({{
+      position: currentPosition,
+      scale: currentScale,
+      animation: false
+    }});
+    scheduleLoadingBarHide(0);
+  }}
+
+  function refreshAfterOntologyToggle() {{
+    if (viewMode === "tree") {{
+      network.fit({{ animation: true }});
+      scheduleLoadingBarHide(0);
+      return;
+    }}
+    const currentScale = network.getScale();
+    const currentPosition = network.getViewPosition();
+    saveCurrentGraphViewport();
+    saveCurrentGraphPositions();
+    network.setOptions({{
+      physics: {{
+        enabled: false
+      }}
+    }});
+    network.stopSimulation();
+    network.redraw();
+    network.moveTo({{
+      position: currentPosition,
+      scale: currentScale,
+      animation: false
+    }});
+    scheduleLoadingBarHide(0);
   }}
 
   function expandCollapsedAncestorsForNode(nodeId) {{
@@ -2535,6 +2629,7 @@ html, body {{
       if (collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0) {{
         expandAll();
       }}
+      refreshAfterOntologyToggle();
       return;
     }}
     if (collapsedOntologyGroups.size > 0 || collapsedClassNodes.size > 0) {{
@@ -2542,6 +2637,7 @@ html, body {{
     }} else {{
       collapseAllByOntology();
     }}
+    refreshAfterOntologyToggle();
   }};
 
   window.ontoviewerToggleLabels = function() {{
@@ -2610,11 +2706,7 @@ html, body {{
     applyLabelMode(labelMode);
     refreshCollapseToggle();
     refreshOntologyLegendControls();
-    if (viewMode === "tree") {{
-      network.fit({{ animation: true }});
-    }} else {{
-      network.stabilize(80);
-    }}
+    refreshAfterOntologyToggle();
   }};
 
   function handleActivatedNode(nodeId) {{
@@ -2629,9 +2721,7 @@ html, body {{
         refreshOntologyLegendControls();
       }}
       applyLabelMode(labelMode);
-      if (viewMode === "tree") {{
-        network.fit({{ animation: true }});
-      }}
+      refreshAfterOntologyToggle();
       return true;
     }}
 
