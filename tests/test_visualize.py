@@ -66,6 +66,7 @@ ex:ChildClass a owl:Class ;
     assert "revealNodeForSearch" in html
     assert "collapsedOntologyGroups" in html
     assert "reapplyCollapsedOntologyGroups()" in html
+    assert "wrapGraphLabel" in html
     assert "isEmbeddedPreview()" in html
     assert '"dragNodes": false' in html or "dragNodes: false" in html
     assert "const savedGraphPositions = new Map();" in html
@@ -89,7 +90,8 @@ ex:ChildClass a owl:Class ;
     assert "ontology imports ontology edge" in html
     assert "ontology defines root class edge" in html
     assert "Gray dashed links connect an ontology node to the root classes defined in that ontology." in html
-    assert "Family-tree view hides relation edges by default so the hierarchy stays readable." in html
+    assert "Use Show/Hide relation edges to toggle all non-subclass ontology relations such as has part, referenced by, references, and applies to." in html
+    assert "property/restriction relation edge (hidden by default in family-tree view)" in html
     assert "setTreeHoverState" in html
     assert 'hierarchical: false' in html
     assert 'smooth: false' in html
@@ -178,6 +180,63 @@ def test_stable_ontology_colors_are_deterministic_and_distinct() -> None:
     assert first_mapping == second_mapping
     assert len(set(first_mapping.values())) == len(ontology_ids)
     assert all(color.startswith("#") and len(color) == 7 for color in first_mapping.values())
+
+
+def test_render_includes_restriction_based_property_edges(tmp_path: Path) -> None:
+    root_file = tmp_path / "restriction.ttl"
+    output_file = tmp_path / "graph.html"
+
+    root_file.write_text(
+        """
+@prefix ex: <http://example.org/root#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://example.org/root> a owl:Ontology .
+ex:Carrier a owl:Class ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty ex:hasPart ;
+        owl:someValuesFrom ex:ReferencedOnly
+    ] .
+ex:hasPart a owl:ObjectProperty ;
+    rdfs:label "has part"@en .
+""",
+        encoding="utf-8",
+    )
+
+    closure = load_ontology_closure(root_file, max_depth=0, rdf_format="turtle")
+    stats = render_interactive_graph(closure, output_file, label_mode="human")
+    html = output_file.read_text(encoding="utf-8")
+
+    assert stats["classes"] == 2
+    assert stats["relations"] == 1
+    assert "has part" in html
+    assert "ReferencedOnly" in html
+
+
+def test_render_wraps_long_graph_node_labels(tmp_path: Path) -> None:
+    root_file = tmp_path / "long-label.ttl"
+    output_file = tmp_path / "graph.html"
+
+    root_file.write_text(
+        """
+@prefix ex: <http://example.org/root#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://example.org/root> a owl:Ontology .
+ex:LongNameClass a owl:Class ;
+    rdfs:label "Nominal Length Specification"@en .
+""",
+        encoding="utf-8",
+    )
+
+    closure = load_ontology_closure(root_file, max_depth=0, rdf_format="turtle")
+    render_interactive_graph(closure, output_file, label_mode="human")
+    html = output_file.read_text(encoding="utf-8")
+
+    assert "Nominal Length\\nSpecification" in html
 
 
 def test_tree_layout_keeps_siblings_on_one_line() -> None:

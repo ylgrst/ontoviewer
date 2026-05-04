@@ -61,6 +61,7 @@ TREE_ONTOLOGY_GAP = 170.0
 TREE_CONNECTOR_GAP = 18.0
 TREE_ARROW_TAIL = 18.0
 TREE_BRANCH_LANE_GAP = 12.0
+GRAPH_LABEL_WRAP = 22
 
 
 LabelMode = Literal["human", "raw"]
@@ -217,6 +218,13 @@ def render_interactive_graph(
                         )
                     )
 
+        relation_edges.update(
+            _extract_restriction_property_edges(
+                graph,
+                property_display_labels=property_display_labels,
+            )
+        )
+
     subclass_pairs = {
         (src, dst)
         for src, dst, _, _, edge_type in relation_edges
@@ -257,7 +265,7 @@ def render_interactive_graph(
         short = _short_label(cls)
         human_display = class_display_labels.get(cls, short)
         raw_display = short
-        display = human_display if label_mode == "human" else raw_display
+        display = _wrap_label_text(human_display if label_mode == "human" else raw_display, GRAPH_LABEL_WRAP)
         title = cls if human_display == short else f"{human_display} ({short})\n{cls}"
         net.add_node(
             cls,
@@ -462,6 +470,13 @@ def _extract_referenced_classes(graph) -> Set[str]:
     for obj in graph.objects(None, RDFS.range):
         if isinstance(obj, URIRef):
             classes.add(str(obj))
+    for _, _, restriction in graph.triples((None, RDFS.subClassOf, None)):
+        if graph.value(restriction, OWL.onProperty) is None:
+            continue
+        for filler_predicate in (OWL.someValuesFrom, OWL.allValuesFrom, OWL.onClass, OWL.hasValue):
+            for filler in graph.objects(restriction, filler_predicate):
+                if isinstance(filler, URIRef):
+                    classes.add(str(filler))
     return classes
 
 
@@ -476,6 +491,48 @@ def _extract_object_properties(graph) -> Set[URIRef]:
     return properties
 
 
+def _extract_restriction_property_edges(
+    graph,
+    *,
+    property_display_labels: Dict[str, str],
+) -> Set[Tuple[str, str, str, str, str]]:
+    edges: Set[Tuple[str, str, str, str, str]] = set()
+
+    for cls, _, restriction in graph.triples((None, RDFS.subClassOf, None)):
+        if not isinstance(cls, URIRef):
+            continue
+
+        prop = graph.value(restriction, OWL.onProperty)
+        if not isinstance(prop, URIRef):
+            continue
+
+        prop_iri = str(prop)
+        human_property_label = property_display_labels.get(prop_iri)
+        if human_property_label is None:
+            human_property_label = preferred_annotation_label(graph, prop_iri) or _short_label(prop_iri)
+            property_display_labels[prop_iri] = human_property_label
+        raw_property_label = _short_label(prop_iri)
+
+        targets: Set[URIRef] = set()
+        for filler_predicate in (OWL.someValuesFrom, OWL.allValuesFrom, OWL.onClass, OWL.hasValue):
+            for filler in graph.objects(restriction, filler_predicate):
+                if isinstance(filler, URIRef):
+                    targets.add(filler)
+
+        for target in targets:
+            edges.add(
+                (
+                    str(cls),
+                    str(target),
+                    human_property_label,
+                    raw_property_label,
+                    "property",
+                )
+            )
+
+    return edges
+
+
 def _short_label(iri: str) -> str:
     if "#" in iri:
         return iri.rsplit("#", 1)[-1]
@@ -483,6 +540,28 @@ def _short_label(iri: str) -> str:
     if "/" in stripped:
         return stripped.rsplit("/", 1)[-1]
     return iri
+
+
+def _wrap_label_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+
+    words = text.split()
+    if len(words) <= 1:
+        return "\n".join(text[i : i + max_chars] for i in range(0, len(text), max_chars))
+
+    lines: list[str] = []
+    current_line = ""
+    for word in words:
+        candidate = f"{current_line} {word}".strip()
+        if len(candidate) > max_chars and current_line:
+            lines.append(current_line)
+            current_line = word
+        else:
+            current_line = candidate
+    if current_line:
+        lines.append(current_line)
+    return "\n".join(lines)
 
 
 def _group_id(iri: str) -> str:
@@ -1395,21 +1474,25 @@ html, body {{
   <hr />
   <button id="ontoviewer-attach-toggle" onclick="window.ontoviewerToggleAttachment()">Attach ontology nodes</button>
   <button id="ontoviewer-collapse-toggle" onclick="window.ontoviewerToggleCollapseAll()">Collapse by ontology</button>
-  <button id="ontoviewer-property-toggle" onclick="window.ontoviewerToggleTreeRelations()">Hide relation edges</button>
+  <button
+    id="ontoviewer-property-toggle"
+    onclick="window.ontoviewerToggleTreeRelations()"
+    title="Show or hide all non-subclass ontology relations such as has part, referenced by, references, applies to, and similar property-based links."
+  >Hide relation edges</button>
   <button id="ontoviewer-label-toggle" onclick="window.ontoviewerToggleLabels()">Show raw labels</button>
   <hr />
   <div class="ontoviewer-legend-title">Legend</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-node-box"></span> Ontology node</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-node-dot"></span> Class node (dot in graph view, box in family-tree view)</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-subclass"></span> subclass edge</div>
-  <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property relation edge (hidden by default in family-tree view)</div>
+  <div class="ontoviewer-legend-row"><span class="ontoviewer-line"></span> property/restriction relation edge (hidden by default in family-tree view)</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line ontoviewer-line-imports"></span> ontology imports ontology edge</div>
   <div class="ontoviewer-legend-row"><span class="ontoviewer-line" style="border-top-color:#94a3b8;border-top-style:dashed;"></span> ontology defines root class edge</div>
   <div class="ontoviewer-legend-hint">Click a class node to fold or unfold its descendant subclass tree.</div>
   <div class="ontoviewer-legend-hint">Click an ontology in the legend to collapse or expand only that ontology.</div>
   <div class="ontoviewer-legend-hint">Gray dashed links connect an ontology node to the root classes defined in that ontology.</div>
   <div class="ontoviewer-legend-hint">Use ontology collapse only for high-level overview.</div>
-  <div class="ontoviewer-legend-hint">Family-tree view hides relation edges by default so the hierarchy stays readable.</div>
+  <div class="ontoviewer-legend-hint">Use Show/Hide relation edges to toggle all non-subclass ontology relations such as has part, referenced by, references, and applies to. Family-tree view hides them by default so the hierarchy stays readable.</div>
   <hr />
   <div class="ontoviewer-legend-title">Ontology Colors</div>
   <ul class="ontoviewer-ontology-list">
@@ -1619,6 +1702,35 @@ html, body {{
   }}
 
   function wrapTreeLabel(text, maxChars) {{
+    if (!text || text.length <= maxChars) {{
+      return text;
+    }}
+    const words = text.split(/\\s+/).filter(Boolean);
+    if (words.length <= 1) {{
+      const chunks = [];
+      for (let i = 0; i < text.length; i += maxChars) {{
+        chunks.push(text.slice(i, i + maxChars));
+      }}
+      return chunks.join("\\n");
+    }}
+    const lines = [];
+    let currentLine = "";
+    words.forEach((word) => {{
+      const candidate = currentLine ? currentLine + " " + word : word;
+      if (candidate.length > maxChars && currentLine) {{
+        lines.push(currentLine);
+        currentLine = word;
+      }} else {{
+        currentLine = candidate;
+      }}
+    }});
+    if (currentLine) {{
+      lines.push(currentLine);
+    }}
+    return lines.join("\\n");
+  }}
+
+  function wrapGraphLabel(text, maxChars) {{
     if (!text || text.length <= maxChars) {{
       return text;
     }}
@@ -2208,7 +2320,9 @@ html, body {{
         return;
       }}
       const plainLabel = nodeBaseLabel(node, mode);
-      const baseLabel = viewMode === "tree" ? wrapTreeLabel(plainLabel, 18) : plainLabel;
+      const baseLabel = viewMode === "tree"
+        ? wrapTreeLabel(plainLabel, 18)
+        : wrapGraphLabel(plainLabel, 22);
       const collapsedCount = collapsedClassNodes.has(node.id) ? collapsedDescendantCount(node.id) : 0;
       const suffix = collapsedCount > 0
         ? (viewMode === "tree" ? "\\n(+" + collapsedCount + ")" : " (+" + collapsedCount + ")")
