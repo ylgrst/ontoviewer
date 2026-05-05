@@ -10,6 +10,7 @@ pytest.importorskip("pyvis")
 from ontoviewer.loader import load_ontology_closure
 from ontoviewer.visualize import Network
 from ontoviewer.visualize import _compute_tree_layout
+from ontoviewer.visualize import _infer_owner_from_iri
 from ontoviewer.visualize import render_interactive_graph
 from ontoviewer.visualize import _stable_ontology_colors
 
@@ -237,6 +238,50 @@ ex:LongNameClass a owl:Class ;
     html = output_file.read_text(encoding="utf-8")
 
     assert "Nominal Length\\nSpecification" in html
+
+
+def test_render_assigns_imported_obo_class_to_imported_ontology_color(tmp_path: Path) -> None:
+    root_file = tmp_path / "obo-owner.ttl"
+    output_file = tmp_path / "graph.html"
+
+    root_file.write_text(
+        """
+@prefix ex: <http://example.org/root#> .
+@prefix bfo: <http://purl.obolibrary.org/obo/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://example.org/root> a owl:Ontology ;
+    owl:imports <http://purl.obolibrary.org/obo/bfo.owl> .
+
+bfo:BFO_0000019 a owl:Class ;
+    rdfs:label "quality"@en .
+
+ex:LocalQualitySubclass a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000019 .
+""",
+        encoding="utf-8",
+    )
+
+    closure = load_ontology_closure(root_file, max_depth=0, rdf_format="turtle")
+    render_interactive_graph(closure, output_file, label_mode="human")
+    html = output_file.read_text(encoding="utf-8")
+
+    assert "http://purl.obolibrary.org/obo/bfo.owl" in html
+    assert '"id": "http://purl.obolibrary.org/obo/BFO_0000019"' in html
+    assert '"ontologyIri": "http://purl.obolibrary.org/obo/bfo.owl"' in html
+
+
+def test_infer_owner_from_obo_class_iri_matches_imported_ontology() -> None:
+    ontology_ids = [
+        "http://example.org/root",
+        "http://purl.obolibrary.org/obo/bfo.owl",
+    ]
+
+    assert (
+        _infer_owner_from_iri("http://purl.obolibrary.org/obo/BFO_0000019", ontology_ids)
+        == "http://purl.obolibrary.org/obo/bfo.owl"
+    )
 
 
 def test_tree_layout_keeps_siblings_on_one_line() -> None:

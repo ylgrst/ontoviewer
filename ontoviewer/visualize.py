@@ -86,11 +86,6 @@ def render_interactive_graph(
     }
 
     loaded_ontology_ids = sorted(closure.documents.keys())
-    ontology_color = _stable_ontology_colors(loaded_ontology_ids)
-    ontology_legend = {iri: ontology_color[iri] for iri in loaded_ontology_ids}
-    ontology_group = {iri: _group_id(iri) for iri in loaded_ontology_ids}
-    group_label = {ontology_group[iri]: _short_label(iri) for iri in loaded_ontology_ids}
-
     ontology_refs: Set[str] = set(loaded_ontology_ids)
     if closure.root_iri:
         ontology_refs.add(closure.root_iri)
@@ -98,6 +93,10 @@ def render_interactive_graph(
         ontology_refs.add(source_iri)
         ontology_refs.add(target_iri)
     ontology_ids = sorted(ontology_refs)
+    ontology_color = _stable_ontology_colors(ontology_ids)
+    ontology_legend = {iri: ontology_color[iri] for iri in ontology_ids}
+    ontology_group = {iri: _group_id(iri) for iri in ontology_ids}
+    group_label = {ontology_group[iri]: _short_label(iri) for iri in ontology_ids}
 
     net = Network(height="850px", width="100%", directed=True, notebook=False, cdn_resources="in_line")
     net.set_options(
@@ -182,12 +181,12 @@ def render_interactive_graph(
         class_nodes.update(_extract_referenced_classes(graph))
 
     for cls in class_nodes:
-        if cls not in class_owner:
-            inferred_owner = _infer_owner_from_iri(cls, loaded_ontology_ids)
-            if inferred_owner:
-                class_owner[cls] = inferred_owner
-            elif closure.root_iri:
-                class_owner[cls] = closure.root_iri
+        current_owner = class_owner.get(cls)
+        inferred_owner = _infer_owner_from_iri(cls, ontology_ids)
+        if inferred_owner and (current_owner is None or not _iri_matches_ontology(cls, current_owner)):
+            class_owner[cls] = inferred_owner
+        elif current_owner is None and closure.root_iri:
+            class_owner[cls] = closure.root_iri
 
     for ont_iri, document in closure.documents.items():
         graph = document.graph
@@ -595,6 +594,17 @@ def _infer_owner_from_iri(class_iri: str, ontology_ids: list[str]) -> Optional[s
         if _iri_matches_ontology(class_iri, ontology_iri) and len(ontology_iri) > best_len:
             best_match = ontology_iri
             best_len = len(ontology_iri)
+    if best_match is not None:
+        return best_match
+
+    if class_iri.startswith("http://purl.obolibrary.org/obo/"):
+        local_name = class_iri.rsplit("/", 1)[-1]
+        if "_" in local_name:
+            ontology_stem = local_name.split("_", 1)[0].lower()
+            for ontology_iri in ontology_ids:
+                short_label = _short_label(ontology_iri).lower()
+                if short_label in {ontology_stem, f"{ontology_stem}.owl"}:
+                    return ontology_iri
     return best_match
 
 
