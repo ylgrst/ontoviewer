@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import deque
+from functools import lru_cache
 import hashlib
+from importlib import resources
 import json
 from html import escape
 from pathlib import Path
@@ -12,6 +14,7 @@ from rdflib import URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
 from ontoviewer.labels import preferred_annotation_label
+from ontoviewer.mandala import extract_individuals, mandala_payload
 from ontoviewer.model import OntologyClosure
 
 DISTINCT_ONTOLOGY_PALETTE = [
@@ -66,12 +69,628 @@ GRAPH_LABEL_WRAP = 22
 
 LabelMode = Literal["human", "raw"]
 
+VENDORED_THREE_FILES = ("three.min.js", "OrbitControls.js")
+
+
+@lru_cache(maxsize=None)
+def _read_vendored_script(filename: str) -> str:
+    """Read a vendored JS bundle from package data.
+
+    Goes through importlib.resources rather than __file__ so the package keeps
+    working when installed as a zipped wheel.
+    """
+    return (
+        resources.files("ontoviewer")
+        .joinpath("vendor", "three", filename)
+        .read_text(encoding="utf-8")
+    )
+
+
+def _three_js_bundle() -> str:
+    """Inline three.js so the generated HTML still opens with no network access.
+
+    OrbitControls is the pre-ESM build and reads globals off ``THREE`` as it is
+    defined, so ordering here is load-bearing.
+    """
+    return "\n".join(
+        f"<script>\n{_read_vendored_script(name)}\n</script>" for name in VENDORED_THREE_FILES
+    )
+
+
+# The mandala renderer. Spliced verbatim into the controls IIFE via the
+# {mandala_script} placeholder, so it closes over the IIFE's mandalaData /
+# selectedSectors / layerOverrides / mandala / viewMode / themeMode / network.
+#
+# assignSectors and normalizeAssignment mirror ontoviewer.mandala.assign_sectors
+# and .normalize, which are the tested reference: keep the two in step.
+_MANDALA_SCRIPT = r"""
+  // ---- Mandala data indices (built once from the injected payload) ----
+  const mandalaClassById = {};
+  const mandalaSuperOf = {};
+  const mandalaChildrenOf = {};
+  const mandalaOntoById = {};
+  (mandalaData.ontologies || []).forEach((o) => { mandalaOntoById[o.iri] = o; });
+  (mandalaData.classes || []).forEach((c) => {
+    mandalaClassById[c.id] = c;
+    mandalaSuperOf[c.id] = (c.superClasses || []).filter((p) => p !== c.id);
+  });
+  Object.keys(mandalaSuperOf).forEach((child) => {
+    mandalaSuperOf[child].forEach((parent) => {
+      if (!mandalaChildrenOf[parent]) { mandalaChildrenOf[parent] = []; }
+      mandalaChildrenOf[parent].push(child);
+    });
+  });
+  Object.keys(mandalaChildrenOf).forEach((k) => mandalaChildrenOf[k].sort());
+
+  const MANDALA_LAYER_Y = { meta: 1.35, onto: 0.0, objects: -1.35 };
+  const MANDALA_R_INNER = 0.18;
+  const MANDALA_R_SPAN = 0.92;
+  const MANDALA_GOLDEN = 2.399963229728653;
+
+  function mandalaEffectiveLayer(cls) {
+    if (!cls) { return "onto"; }
+    const override = layerOverrides[cls.ontologyIri];
+    return override ? override : cls.layer;
+  }
+
+  function mandalaRadius(rNorm) {
+    return MANDALA_R_INNER + rNorm * MANDALA_R_SPAN;
+  }
+
+  // Mirror of ontoviewer.mandala.assign_sectors: primary sector is the nearest,
+  // ties break on the lexicographically smaller sector IRI. Cycle-guarded BFS.
+  function assignSectors(sectors) {
+    const ordered = sectors.slice().sort();
+    const distances = {};
+    ordered.forEach((sector) => {
+      if (!(sector in mandalaSuperOf)) { return; }
+      const visited = {};
+      visited[sector] = true;
+      const queue = [[sector, 0]];
+      let head = 0;
+      while (head < queue.length) {
+        const pair = queue[head++];
+        const current = pair[0];
+        const depth = pair[1];
+        if (!distances[current]) { distances[current] = {}; }
+        distances[current][sector] = depth;
+        (mandalaChildrenOf[current] || []).forEach((child) => {
+          if (!visited[child]) { visited[child] = true; queue.push([child, depth + 1]); }
+        });
+      }
+    });
+    const assignment = {};
+    Object.keys(distances).forEach((cls) => {
+      let bestSector = null;
+      let bestDepth = -1;
+      ordered.forEach((sector) => {
+        const depth = distances[cls][sector];
+        if (depth === undefined) { return; }
+        if (bestDepth < 0 || depth < bestDepth) { bestSector = sector; bestDepth = depth; }
+      });
+      if (bestDepth >= 0) {
+        assignment[cls] = { sector: bestSector, depth: bestDepth, all: distances[cls] };
+      }
+    });
+    return assignment;
+  }
+
+  // Mirror of ontoviewer.mandala.normalize: scale depth against the sector's
+  // deepest node so every slice reaches the rim.
+  function normalizeAssignment(assignment) {
+    const deepest = {};
+    Object.keys(assignment).forEach((cls) => {
+      const a = assignment[cls];
+      if (a.depth > (deepest[a.sector] || 0)) { deepest[a.sector] = a.depth; }
+    });
+    const rNorm = {};
+    Object.keys(assignment).forEach((cls) => {
+      const a = assignment[cls];
+      rNorm[cls] = a.depth / Math.max(1, deepest[a.sector] || 0);
+    });
+    return rNorm;
+  }
+
+  function mandalaThemeColors() {
+    const dark = themeMode === "dark";
+    return {
+      background: dark ? 0x0f172a : 0xf8fafc,
+      ring: dark ? 0x334155 : 0xcbd5e1,
+      spoke: dark ? 0x475569 : 0x94a3b8,
+      axis: dark ? 0x64748b : 0x94a3b8,
+      edge: dark ? 0x334155 : 0xcbd5e1,
+      typeEdge: dark ? 0x64748b : 0x9ca3af,
+      unassigned: dark ? 0x475569 : 0x9ca3af,
+      label: dark ? "#cbd5e1" : "#334155"
+    };
+  }
+
+  function mandalaMakeLabelSprite(text, cssColor) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256; canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillStyle = cssColor;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 128, 32);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+    sprite.scale.set(0.9, 0.225, 1);
+    return sprite;
+  }
+
+  // Turn the current sectors + overrides into 3D node/edge geometry.
+  function computeMandalaGeometry() {
+    const sectors = selectedSectors.filter((id) => mandalaClassById[id]);
+    const assignment = assignSectors(sectors);
+    const rNorm = normalizeAssignment(assignment);
+    const k = sectors.length;
+    const orderedSectors = sectors.slice().sort();
+    const sectorIndex = {};
+    orderedSectors.forEach((s, i) => { sectorIndex[s] = i; });
+
+    const sectorAngle = (sector) => (k > 0 ? sectorIndex[sector] * (Math.PI * 2 / k) : 0);
+    const sectorHalfWidth = (k > 0 ? (Math.PI / k) * 0.8 : Math.PI);
+
+    // Bucket nodes so siblings in the same slice+layer can be fanned apart.
+    const buckets = {};
+    const stubs = {};
+    const pushBucket = (key, id) => { if (!buckets[key]) { buckets[key] = []; } buckets[key].push(id); };
+
+    Object.keys(mandalaClassById).forEach((id) => {
+      const cls = mandalaClassById[id];
+      const layer = mandalaEffectiveLayer(cls);
+      if (layer === "hidden") { return; }
+      const a = assignment[id];
+      if (a) {
+        const key = "S|" + a.sector + "|" + layer;
+        stubs[id] = { id: id, kind: "class", cls: cls, layer: layer, sector: a.sector,
+                      depth: a.depth, radius: mandalaRadius(rNorm[id]), all: a.all };
+        pushBucket(key, id);
+      } else {
+        const key = "AXIS|" + layer;
+        stubs[id] = { id: id, kind: "class", cls: cls, layer: layer, sector: null, depth: 0, radius: 0.0 };
+        pushBucket(key, id);
+      }
+    });
+
+    const nodes = [];
+    const posOf = {};
+    Object.keys(buckets).forEach((key) => {
+      const ids = buckets[key].slice().sort((x, y) => {
+        const dx = stubs[x].depth - stubs[y].depth;
+        if (dx !== 0) { return dx; }
+        const lx = (mandalaClassById[x].humanLabel || x);
+        const ly = (mandalaClassById[y].humanLabel || y);
+        return lx < ly ? -1 : (lx > ly ? 1 : 0);
+      });
+      const n = ids.length;
+      const onAxis = key.indexOf("AXIS|") === 0;
+      ids.forEach((id, j) => {
+        const s = stubs[id];
+        const baseY = MANDALA_LAYER_Y[s.layer] !== undefined ? MANDALA_LAYER_Y[s.layer] : 0;
+        let angle; let radius; let y;
+        if (onAxis) {
+          angle = j * MANDALA_GOLDEN;
+          radius = 0.035 + 0.05 * (n > 1 ? (j / n) : 0);
+          y = baseY + ((j % 5) - 2) * 0.045;
+        } else {
+          const center = sectorAngle(s.sector);
+          angle = n === 1 ? center : center + sectorHalfWidth * (((j + 0.5) / n) * 2 - 1);
+          radius = s.radius;
+          y = baseY;
+        }
+        const pos = new THREE.Vector3(radius * Math.cos(angle), y, radius * Math.sin(angle));
+        posOf[id] = pos;
+        nodes.push({
+          id: id, kind: "class", label: mandalaClassById[id].humanLabel || id,
+          color: mandalaClassById[id].color || "#9ca3af", layer: s.layer,
+          sector: s.sector, secondary: s.all ? Object.keys(s.all).filter((x) => x !== s.sector) : [],
+          onAxis: onAxis, pos: pos
+        });
+      });
+    });
+
+    // Individuals inherit their type's angle + radius so rdf:type reads vertical.
+    const edges = [];
+    const typeBuckets = {};
+    const individualPrimary = {};
+    (mandalaData.individuals || []).forEach((ind) => {
+      const typedAssigned = (ind.types || []).filter((t) => assignment[t] && posOf[t]);
+      if (typedAssigned.length === 0) {
+        individualPrimary[ind.id] = null;
+        return;
+      }
+      typedAssigned.sort((a, b) => {
+        const sa = assignment[a].sector; const sb = assignment[b].sector;
+        if (sa !== sb) { return sa < sb ? -1 : 1; }
+        return assignment[a].depth - assignment[b].depth;
+      });
+      const primary = typedAssigned[0];
+      individualPrimary[ind.id] = primary;
+      if (!typeBuckets[primary]) { typeBuckets[primary] = []; }
+      typeBuckets[primary].push(ind);
+    });
+
+    const objectsY = MANDALA_LAYER_Y.objects;
+    (mandalaData.individuals || []).forEach((ind) => {
+      const primary = individualPrimary[ind.id];
+      let pos;
+      if (primary && posOf[primary]) {
+        const siblings = typeBuckets[primary];
+        const idx = siblings.indexOf(ind);
+        const n = siblings.length;
+        const typePos = posOf[primary];
+        const baseAngle = Math.atan2(typePos.z, typePos.x);
+        const radius = Math.max(0.05, Math.sqrt(typePos.x * typePos.x + typePos.z * typePos.z));
+        const fan = n === 1 ? 0 : (((idx + 0.5) / n) * 2 - 1) * 0.14;
+        const angle = baseAngle + fan;
+        pos = new THREE.Vector3(radius * Math.cos(angle), objectsY, radius * Math.sin(angle));
+        edges.push({ a: pos, b: typePos, kind: "type" });
+      } else {
+        const idx = nodes.length;
+        pos = new THREE.Vector3(0.04 * Math.cos(idx * MANDALA_GOLDEN), objectsY + ((idx % 5) - 2) * 0.04, 0.04 * Math.sin(idx * MANDALA_GOLDEN));
+      }
+      posOf[ind.id] = pos;
+      nodes.push({
+        id: ind.id, kind: "individual", label: ind.label || ind.id,
+        color: primary ? (mandalaClassById[primary].color || "#f0a040") : "#f0a040",
+        layer: "objects", sector: primary ? assignment[primary].sector : null,
+        types: ind.types || [], onAxis: !primary, pos: pos
+      });
+    });
+
+    // Faint subclass edges between assigned classes show descent within a slice.
+    Object.keys(assignment).forEach((id) => {
+      if (!posOf[id]) { return; }
+      (mandalaSuperOf[id] || []).forEach((sup) => {
+        if (assignment[sup] && posOf[sup]) { edges.push({ a: posOf[id], b: posOf[sup], kind: "subclass" }); }
+      });
+    });
+
+    return { nodes: nodes, edges: edges, sectors: orderedSectors, sectorAngle: sectorAngle };
+  }
+
+  function showMandalaError(message) {
+    const empty = document.getElementById("ontoviewer-mandala-empty");
+    if (empty) { empty.textContent = message; empty.style.display = "block"; }
+  }
+
+  function initMandala() {
+    const container = document.getElementById("ontoviewer-mandala");
+    if (!container) { return null; }
+    if (typeof THREE === "undefined") {
+      showMandalaError("The 3D runtime failed to load, so the mandala view is unavailable.");
+      return null;
+    }
+    const colors = mandalaThemeColors();
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(colors.background);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    camera.position.set(2.6, 2.1, 3.6);
+    // WebGLRenderer throws when the browser cannot grant a WebGL context
+    // (headless, disabled, or blocklisted GPU); fall back to a message.
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (err) {
+      showMandalaError("This browser could not create a WebGL context, so the mandala view is unavailable.");
+      return null;
+    }
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    container.insertBefore(renderer.domElement, container.firstChild);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 1.2;
+    controls.maxDistance = 14;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+    dir.position.set(4, 6, 5);
+    scene.add(dir);
+
+    const staticGroup = new THREE.Group();
+    const contentGroup = new THREE.Group();
+    scene.add(staticGroup);
+    scene.add(contentGroup);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let pickables = [];
+
+    const state = {
+      scene: scene, camera: camera, renderer: renderer, controls: controls,
+      staticGroup: staticGroup, contentGroup: contentGroup,
+      raycaster: raycaster, pointer: pointer, pickables: pickables, running: false
+    };
+
+    function clearGroup(group) {
+      for (let i = group.children.length - 1; i >= 0; i--) {
+        const child = group.children[i];
+        group.remove(child);
+        if (child.geometry) { child.geometry.dispose(); }
+        if (child.material) {
+          if (child.material.map) { child.material.map.dispose(); }
+          child.material.dispose();
+        }
+      }
+    }
+
+    function addRing(radius, y, colorHex) {
+      const pts = [];
+      for (let i = 0; i <= 96; i++) {
+        const t = (i / 96) * Math.PI * 2;
+        pts.push(new THREE.Vector3(radius * Math.cos(t), y, radius * Math.sin(t)));
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.5 });
+      state.staticGroup.add(new THREE.Line(geo, mat));
+    }
+
+    function buildStatic(geometry) {
+      clearGroup(state.staticGroup);
+      const themeCols = mandalaThemeColors();
+      state.scene.background = new THREE.Color(themeCols.background);
+      const layers = [["meta", "Meta core"], ["onto", "Domain core"], ["objects", "Individuals"]];
+      layers.forEach((entry) => {
+        const y = MANDALA_LAYER_Y[entry[0]];
+        [0.35, 0.65, 0.95, 1.1].forEach((r) => addRing(r, y, themeCols.ring));
+        const label = mandalaMakeLabelSprite(entry[1], themeCols.label);
+        label.position.set(0, y + 0.16, 0);
+        label.userData = { pick: false };
+        state.staticGroup.add(label);
+      });
+      // Central axis.
+      const axisGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, MANDALA_LAYER_Y.objects - 0.25, 0),
+        new THREE.Vector3(0, MANDALA_LAYER_Y.meta + 0.25, 0)
+      ]);
+      state.staticGroup.add(new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: themeCols.axis, transparent: true, opacity: 0.6 })));
+      // Sector spokes + rim labels on the meta disc.
+      const k = geometry.sectors.length;
+      geometry.sectors.forEach((sector) => {
+        const angle = geometry.sectorAngle(sector);
+        [MANDALA_LAYER_Y.meta, MANDALA_LAYER_Y.onto, MANDALA_LAYER_Y.objects].forEach((y) => {
+          const spokeGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0.05 * Math.cos(angle), y, 0.05 * Math.sin(angle)),
+            new THREE.Vector3(1.12 * Math.cos(angle), y, 1.12 * Math.sin(angle))
+          ]);
+          state.staticGroup.add(new THREE.Line(spokeGeo, new THREE.LineBasicMaterial({ color: themeCols.spoke, transparent: true, opacity: 0.35 })));
+        });
+        const cls = mandalaClassById[sector];
+        const label = mandalaMakeLabelSprite(cls ? (cls.humanLabel || sector) : sector, cls ? cls.color : themeCols.label);
+        label.position.set(1.32 * Math.cos(angle), MANDALA_LAYER_Y.meta + 0.05, 1.32 * Math.sin(angle));
+        state.staticGroup.add(label);
+      });
+      void k;
+    }
+
+    function buildContent(geometry) {
+      clearGroup(state.contentGroup);
+      const themeCols = mandalaThemeColors();
+      state.pickables = [];
+      const sphereGeo = new THREE.SphereGeometry(0.026, 12, 12);
+      geometry.nodes.forEach((node) => {
+        const colorHex = node.onAxis ? ("#" + new THREE.Color(themeCols.unassigned).getHexString()) : node.color;
+        const mat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(colorHex),
+          emissive: new THREE.Color(colorHex),
+          emissiveIntensity: node.kind === "individual" ? 0.45 : 0.25,
+          roughness: 0.55
+        });
+        const mesh = new THREE.Mesh(sphereGeo, mat);
+        mesh.position.copy(node.pos);
+        if (node.kind === "individual") { mesh.scale.setScalar(0.82); }
+        mesh.userData = { pick: true, node: node };
+        state.contentGroup.add(mesh);
+        state.pickables.push(mesh);
+      });
+      geometry.edges.forEach((edge) => {
+        const geo = new THREE.BufferGeometry().setFromPoints([edge.a, edge.b]);
+        const colorHex = edge.kind === "type" ? themeCols.typeEdge : themeCols.edge;
+        const mat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: edge.kind === "type" ? 0.5 : 0.28 });
+        state.contentGroup.add(new THREE.Line(geo, mat));
+      });
+    }
+
+    function onResize() {
+      const w = container.clientWidth || 1;
+      const h = container.clientHeight || 1;
+      state.renderer.setSize(w, h, false);
+      state.camera.aspect = w / h;
+      state.camera.updateProjectionMatrix();
+    }
+
+    function onClick(event) {
+      const rect = state.renderer.domElement.getBoundingClientRect();
+      state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      state.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      state.raycaster.setFromCamera(state.pointer, state.camera);
+      const hits = state.raycaster.intersectObjects(state.pickables, false);
+      if (hits.length > 0) {
+        showMandalaInfo(hits[0].object.userData.node);
+      } else {
+        hideMandalaInfo();
+      }
+    }
+
+    renderer.domElement.addEventListener("click", onClick);
+    window.addEventListener("resize", onResize);
+
+    function animate() {
+      if (!state.running) { return; }
+      state.controls.update();
+      state.renderer.render(state.scene, state.camera);
+      requestAnimationFrame(animate);
+    }
+
+    state.rebuild = function() {
+      const geometry = computeMandalaGeometry();
+      buildStatic(geometry);
+      buildContent(geometry);
+    };
+    state.resize = onResize;
+    state.start = function() {
+      if (!state.running) { state.running = true; requestAnimationFrame(animate); }
+    };
+    state.updateTheme = function() {
+      state.rebuild();
+    };
+    return state;
+  }
+
+  function showMandalaInfo(node) {
+    const panel = document.getElementById("ontoviewer-mandala-info");
+    if (!panel) { return; }
+    const rows = [];
+    rows.push("<b>" + mandalaEscape(node.label) + "</b>");
+    rows.push(node.kind === "individual" ? "individual" : "class");
+    const layerNames = { meta: "meta layer", onto: "ontology layer", objects: "individuals layer" };
+    rows.push(layerNames[node.layer] || node.layer);
+    if (node.sector) {
+      const sectorCls = mandalaClassById[node.sector];
+      rows.push("slice: " + mandalaEscape(sectorCls ? (sectorCls.humanLabel || node.sector) : node.sector));
+    } else {
+      rows.push("on the axis (shared by every slice)");
+    }
+    if (node.secondary && node.secondary.length > 0) {
+      const names = node.secondary.map((s) => {
+        const c = mandalaClassById[s];
+        return mandalaEscape(c ? (c.humanLabel || s) : s);
+      });
+      rows.push("also under: " + names.join(", "));
+    }
+    if (node.kind === "individual" && node.types && node.types.length > 0) {
+      const names = node.types.map((t) => {
+        const c = mandalaClassById[t];
+        return mandalaEscape(c ? (c.humanLabel || t) : t);
+      });
+      rows.push("type: " + names.join(", "));
+    }
+    panel.innerHTML = rows.join("<br />");
+    panel.style.display = "block";
+  }
+
+  function hideMandalaInfo() {
+    const panel = document.getElementById("ontoviewer-mandala-info");
+    if (panel) { panel.style.display = "none"; }
+  }
+
+  function mandalaEscape(text) {
+    return String(text === undefined || text === null ? "" : text)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function refreshMandalaEmptyState() {
+    const empty = document.getElementById("ontoviewer-mandala-empty");
+    if (empty) { empty.style.display = selectedSectors.length === 0 ? "block" : "none"; }
+  }
+
+  function activateMandala() {
+    if (!mandalaEnabled) { return; }
+    refreshMandalaEmptyState();
+    if (!mandala) {
+      mandala = initMandala();
+      if (!mandala) { return; }
+    }
+    mandala.resize();
+    mandala.rebuild();
+    mandala.resize();
+    mandala.start();
+  }
+
+  function rebuildMandalaIfActive() {
+    refreshMandalaEmptyState();
+    if (mandala && viewMode === "mandala") {
+      mandala.rebuild();
+    }
+  }
+
+  function toggleSector(nodeId) {
+    const cls = mandalaClassById[nodeId];
+    if (!cls) { return; }
+    if (mandalaEffectiveLayer(cls) !== "meta") { return; }
+    const idx = selectedSectors.indexOf(nodeId);
+    if (idx >= 0) { selectedSectors.splice(idx, 1); } else { selectedSectors.push(nodeId); }
+    renderSectorChips();
+    rebuildMandalaIfActive();
+  }
+
+  function renderSectorChips() {
+    const holder = document.getElementById("ontoviewer-sector-chips");
+    if (!holder) { return; }
+    if (selectedSectors.length === 0) {
+      holder.innerHTML = "<div class=\"ontoviewer-legend-hint\">No slices yet.</div>";
+      return;
+    }
+    holder.innerHTML = selectedSectors.map((id) => {
+      const cls = mandalaClassById[id];
+      const label = mandalaEscape(cls ? (cls.humanLabel || id) : id);
+      const color = cls ? cls.color : "#9ca3af";
+      return "<span class=\"ontoviewer-sector-chip\">"
+        + "<span class=\"ontoviewer-sector-swatch\" style=\"background:" + color + "\"></span>"
+        + label
+        + "<button type=\"button\" title=\"Remove slice\" onclick=\"window.ontoviewerToggleSector('" + encodeURIComponent(id) + "')\">&times;</button>"
+        + "</span>";
+    }).join("");
+  }
+
+  function renderLayerOverrides() {
+    const holder = document.getElementById("ontoviewer-layer-overrides");
+    if (!holder) { return; }
+    const rows = (mandalaData.ontologies || []).map((onto) => {
+      const current = layerOverrides[onto.iri] || onto.defaultLayer;
+      const options = [["meta", "Meta"], ["onto", "Ontology"], ["hidden", "Hidden"]].map((opt) => {
+        const sel = current === opt[0] ? " selected" : "";
+        return "<option value=\"" + opt[0] + "\"" + sel + ">" + opt[1] + "</option>";
+      }).join("");
+      return "<div class=\"ontoviewer-sector-chip\" style=\"display:flex;width:100%;\">"
+        + "<span class=\"ontoviewer-sector-swatch\" style=\"background:" + onto.color + "\"></span>"
+        + "<span>" + mandalaEscape(onto.label) + "</span>"
+        + "<select class=\"ontoviewer-layer-select\" onchange=\"window.ontoviewerSetLayerOverride('" + encodeURIComponent(onto.iri) + "', this.value)\">"
+        + options + "</select></div>";
+    });
+    holder.innerHTML = rows.join("");
+  }
+
+  window.ontoviewerToggleSector = function(encodedId) {
+    toggleSector(decodeURIComponent(encodedId));
+  };
+
+  window.ontoviewerClearSectors = function() {
+    selectedSectors.length = 0;
+    renderSectorChips();
+    rebuildMandalaIfActive();
+  };
+
+  window.ontoviewerSetLayerOverride = function(encodedIri, value) {
+    const iri = decodeURIComponent(encodedIri);
+    const onto = mandalaOntoById[iri];
+    if (onto && value === onto.defaultLayer) { delete layerOverrides[iri]; } else { layerOverrides[iri] = value; }
+    // A class demoted out of the meta layer can no longer anchor a slice.
+    for (let i = selectedSectors.length - 1; i >= 0; i--) {
+      const cls = mandalaClassById[selectedSectors[i]];
+      if (!cls || mandalaEffectiveLayer(cls) !== "meta") { selectedSectors.splice(i, 1); }
+    }
+    renderSectorChips();
+    renderLayerOverrides();
+    rebuildMandalaIfActive();
+  };
+"""
+
 
 def render_interactive_graph(
     closure: OntologyClosure,
     output_path: Path,
     *,
     label_mode: LabelMode = "human",
+    include_mandala: bool = True,
 ) -> Dict[str, int]:
     """Render an interactive HTML graph with ontology-aware colors and clustering controls."""
     source_to_ontology_iri = {
@@ -179,6 +798,18 @@ def render_interactive_graph(
                 if readable:
                     class_display_labels[cls_iri] = readable
         class_nodes.update(_extract_referenced_classes(graph))
+
+    # Individuals need the complete class set, so this runs after every document
+    # has contributed its declarations.
+    individuals: Dict[str, Set[str]] = {}
+    individual_display_labels: Dict[str, str] = {}
+    for document in closure.documents.values():
+        graph = document.graph
+        for individual_iri, types in extract_individuals(graph, class_nodes).items():
+            individuals.setdefault(individual_iri, set()).update(types)
+            if individual_iri not in individual_display_labels:
+                readable = preferred_annotation_label(graph, individual_iri)
+                individual_display_labels[individual_iri] = readable or _short_label(individual_iri)
 
     for cls in class_nodes:
         current_owner = class_owner.get(cls)
@@ -425,6 +1056,20 @@ def render_interactive_graph(
             dashes=True,
         )
 
+    mandala_data = mandala_payload(
+        class_nodes=class_nodes,
+        class_owner=class_owner,
+        class_human_labels=class_display_labels,
+        class_raw_labels={cls: _short_label(cls) for cls in class_nodes},
+        subclass_pairs=subclass_pairs,
+        individuals=individuals,
+        individual_labels=individual_display_labels,
+        ontology_ids=ontology_ids,
+        ontology_color=ontology_color,
+        ontology_labels={iri: _short_label(iri) for iri in ontology_ids},
+        root_iri=closure.root_iri,
+    )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(net.generate_html(notebook=False), encoding="utf-8")
     has_unresolved_ontology_nodes = any(iri not in closure.documents for iri in ontology_ids)
@@ -434,6 +1079,8 @@ def render_interactive_graph(
         initial_label_mode=label_mode,
         ontology_legend=ontology_legend,
         has_unresolved_ontology_nodes=has_unresolved_ontology_nodes,
+        mandala_data=mandala_data,
+        include_mandala=include_mandala,
     )
 
     unresolved_import_targets = {
@@ -444,6 +1091,7 @@ def render_interactive_graph(
         "ontologies": len(closure.documents),
         "ontology_refs": len(ontology_ids),
         "classes": len(class_nodes),
+        "individuals": len(individuals),
         "relations": rendered_relations,
         "imports": len(canonical_import_edges),
         "unresolved_imports": len(unresolved_import_targets),
@@ -1199,8 +1847,12 @@ def _inject_cluster_controls(
     initial_label_mode: LabelMode,
     ontology_legend: Dict[str, str],
     has_unresolved_ontology_nodes: bool,
+    mandala_data: Optional[Dict[str, object]] = None,
+    include_mandala: bool = False,
 ) -> None:
     html = output_path.read_text(encoding="utf-8")
+    mandala_enabled = include_mandala and mandala_data is not None
+    mandala_json = json.dumps(mandala_data if mandala_enabled else {"classes": [], "individuals": [], "ontologies": []})
     ontology_items = "".join(
         f"""
         <li class="ontoviewer-ontology-item">
@@ -1232,6 +1884,35 @@ def _inject_cluster_controls(
           <span>Unresolved imported ontology</span>
         </li>
         """
+
+    # A plain (non-f) string: the mandala renderer is dense with JS object and
+    # arrow-function braces, and doubling every one of them for the controls
+    # f-string would be unreadable and error-prone. It is spliced in verbatim via
+    # the {mandala_script} placeholder and runs inside the same IIFE, so it closes
+    # over mandalaEnabled / mandalaData / selectedSectors / layerOverrides /
+    # mandala / viewMode / themeMode declared above it.
+    mandala_script = _MANDALA_SCRIPT if mandala_enabled else ""
+
+    mandala_view_button = ""
+    mandala_panel = ""
+    if mandala_enabled:
+        mandala_view_button = (
+            '<button id="ontoviewer-mandala-view-btn" '
+            "onclick=\"window.ontoviewerSetViewMode('mandala')\">Mandala view</button>"
+        )
+        mandala_panel = """
+  <div id="ontoviewer-mandala-panel" style="display:none;">
+    <div class="ontoviewer-legend-title">Mandala sectors</div>
+    <div id="ontoviewer-sector-chips"></div>
+    <button id="ontoviewer-sector-clear" type="button" onclick="window.ontoviewerClearSectors()">Clear sectors</button>
+    <div class="ontoviewer-legend-hint">Ctrl/&#8984;-click a meta class in Graph or Family tree view to add or drop a slice. Height is the layer (meta / ontology / individuals); distance from the axis is how specialised a class is; the axis holds what every slice shares.</div>
+    <hr />
+    <div class="ontoviewer-legend-title">Layers</div>
+    <div id="ontoviewer-layer-overrides"></div>
+    <div class="ontoviewer-legend-hint">Move an ontology between the top (meta) and middle (ontology) discs, or hide it.</div>
+    <hr />
+  </div>
+"""
 
     controls = f"""
 <style>
@@ -1281,6 +1962,86 @@ html, body {{
   width: calc(100vw - 360px) !important;
   height: 100vh !important;
   background: var(--ov-network-bg);
+}}
+#ontoviewer-mandala {{
+  display: none;
+  position: relative;
+  width: calc(100vw - 360px);
+  height: 100vh;
+  background: var(--ov-network-bg);
+}}
+#ontoviewer-mandala canvas {{
+  display: block;
+  width: 100%;
+  height: 100%;
+}}
+.ontoviewer-mandala-info {{
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  max-width: 340px;
+  padding: 10px 12px;
+  border: 1px solid var(--ov-border);
+  border-radius: 8px;
+  background: var(--ov-panel-bg);
+  color: var(--ov-text);
+  font-family: sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}}
+.ontoviewer-mandala-info b {{
+  font-size: 13px;
+}}
+.ontoviewer-mandala-empty {{
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 440px;
+  padding: 16px 18px;
+  border: 1px dashed var(--ov-border-strong);
+  border-radius: 10px;
+  background: var(--ov-panel-bg);
+  color: var(--ov-text-soft);
+  font-family: sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}}
+.ontoviewer-sector-chip {{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 6px 6px 0;
+  padding: 3px 8px;
+  border: 1px solid var(--ov-border-strong);
+  border-radius: 999px;
+  font-size: 12px;
+}}
+.ontoviewer-sector-chip button {{
+  margin: 0 !important;
+  padding: 0 4px !important;
+  border: none !important;
+  background: none !important;
+  color: var(--ov-text-soft);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}}
+.ontoviewer-sector-swatch {{
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}}
+.ontoviewer-layer-select {{
+  margin-left: auto;
+  border: 1px solid var(--ov-border-strong);
+  border-radius: 5px;
+  background: var(--ov-panel-bg);
+  color: var(--ov-text);
+  font-size: 11px;
 }}
 .ontoviewer-controls {{
   position: fixed;
@@ -1448,6 +2209,10 @@ html, body {{
     width: 100vw !important;
     height: calc(100vh - 260px) !important;
   }}
+  #ontoviewer-mandala {{
+    width: 100vw;
+    height: calc(100vh - 260px);
+  }}
   .ontoviewer-controls {{
     top: auto;
     left: 0;
@@ -1461,11 +2226,19 @@ html, body {{
   }}
 }}
 </style>
+<div id="ontoviewer-mandala">
+  <div id="ontoviewer-mandala-info" class="ontoviewer-mandala-info" style="display:none;"></div>
+  <div id="ontoviewer-mandala-empty" class="ontoviewer-mandala-empty">
+    Ctrl/&#8984;-click meta-ontology classes in Graph view or Family tree view to pick the pizza slices, then the layers arrange themselves around them.
+  </div>
+</div>
 <div class="ontoviewer-controls">
   <button id="ontoviewer-graph-view-btn" onclick="window.ontoviewerSetViewMode('graph')">Graph view</button>
   <button id="ontoviewer-tree-view-btn" onclick="window.ontoviewerSetViewMode('tree')">Family tree view</button>
+  {mandala_view_button}
   <button id="ontoviewer-theme-toggle" onclick="window.ontoviewerToggleTheme()">Dark mode</button>
   <hr />
+  {mandala_panel}
   <div class="ontoviewer-search">
     <input
       id="ontoviewer-search-input"
@@ -1513,6 +2286,8 @@ html, body {{
 <script>
 (function() {{
   const groupLabels = {json.dumps(group_labels)};
+  const mandalaEnabled = {json.dumps(bool(mandala_enabled))};
+  const mandalaData = {mandala_json};
   const clusterIds = new Set();
   const collapsedOntologyGroups = new Set();
   const collapsedClassNodes = new Set();
@@ -1531,6 +2306,9 @@ html, body {{
   const savedGraphPositions = new Map();
   let savedGraphViewport = null;
   let hoveredTreeNodeId = null;
+  const selectedSectors = [];
+  const layerOverrides = {{}};
+  let mandala = null;
   const graphViewOptions = {{
     interaction: {{
       dragNodes: true,
@@ -1772,11 +2550,15 @@ html, body {{
   function viewModeButtonState(mode) {{
     const graphBtn = document.getElementById("ontoviewer-graph-view-btn");
     const treeBtn = document.getElementById("ontoviewer-tree-view-btn");
+    const mandalaBtn = document.getElementById("ontoviewer-mandala-view-btn");
     if (graphBtn) {{
       graphBtn.disabled = mode === "graph";
     }}
     if (treeBtn) {{
       treeBtn.disabled = mode === "tree";
+    }}
+    if (mandalaBtn) {{
+      mandalaBtn.disabled = mode === "mandala";
     }}
   }}
 
@@ -1821,6 +2603,18 @@ html, body {{
   }}
 
   function refreshSearchControls() {{
+    // Search drives network.focus, which is meaningless while the vis canvas is
+    // hidden behind the mandala, so the whole search block steps aside there.
+    const searchBlock = document.querySelector(".ontoviewer-search");
+    if (searchBlock) {{
+      searchBlock.style.display = viewMode === "mandala" ? "none" : "block";
+    }}
+    // Sectors are picked from Graph/Tree view, so the chips must be visible
+    // there too -- otherwise Ctrl-clicking gives no feedback.
+    const mandalaPanel = document.getElementById("ontoviewer-mandala-panel");
+    if (mandalaPanel) {{
+      mandalaPanel.style.display = "block";
+    }}
     const countEl = document.getElementById("ontoviewer-search-count");
     if (countEl) {{
       countEl.textContent = searchCountText();
@@ -2165,6 +2959,9 @@ html, body {{
     refreshEdgeVisibility();
     refreshThemeToggle();
     refreshSearchHighlight();
+    if (mandala) {{
+      mandala.updateTheme(mode);
+    }}
     if (notifyParent && window.parent && window.parent !== window) {{
       try {{
         window.parent.postMessage({{ type: "ontoviewer-theme", mode: mode }}, "*");
@@ -2392,10 +3189,44 @@ html, body {{
     refreshEdgeVisibility();
   }}
 
+  function setMandalaContainerVisible(visible) {{
+    const mandalaEl = document.getElementById("ontoviewer-mandala");
+    const networkEl = document.getElementById("mynetwork");
+    if (mandalaEl) {{
+      mandalaEl.style.display = visible ? "block" : "none";
+    }}
+    if (networkEl) {{
+      networkEl.style.display = visible ? "none" : "block";
+    }}
+  }}
+
   function applyViewMode(mode) {{
     const previousViewMode = viewMode;
     const switchingGraphToTree = previousViewMode === "graph" && mode === "tree";
     const switchingTreeToGraph = previousViewMode === "tree" && mode === "graph";
+    // The mandala replaces the vis canvas entirely, so it saves/restores the
+    // graph layout the same way tree does but shares none of the 2D restyling.
+    if (mode === "mandala") {{
+      if (previousViewMode === "graph") {{
+        saveCurrentGraphViewport();
+        saveCurrentGraphPositions();
+        openOntologyClusters(false);
+      }}
+      viewMode = mode;
+      network.stopSimulation();
+      setMandalaContainerVisible(true);
+      viewModeButtonState(mode);
+      refreshPropertyToggle();
+      refreshOntologyLegendControls();
+      refreshSearchControls();
+      activateMandala();
+      return;
+    }}
+    setMandalaContainerVisible(false);
+    // Returning to graph from any non-graph view (tree OR mandala) must restore
+    // the saved layout with physics off, never re-run stabilization.
+    const restoringGraphLayout =
+      mode === "graph" && previousViewMode !== "graph" && !!savedGraphViewport;
     if (switchingGraphToTree) {{
       // Preserve current graph coordinates, including collapsed ontology shells.
       saveCurrentGraphViewport();
@@ -2425,7 +3256,7 @@ html, body {{
       applyLabelMode(labelMode);
       reapplyCollapsedOntologyGroups();
       setTreeHoverState(null);
-      if (switchingTreeToGraph) {{
+      if (restoringGraphLayout) {{
         network.setOptions({{
           physics: {{
             enabled: false
@@ -2445,9 +3276,11 @@ html, body {{
         network.stabilize(200);
       }}
     }}
+    void switchingTreeToGraph;
     viewModeButtonState(mode);
     refreshPropertyToggle();
     refreshOntologyLegendControls();
+    refreshSearchControls();
     refreshSearchHighlight();
     scheduleCurrentSearchFocus(mode === "tree" ? 120 : 260);
   }}
@@ -2573,6 +3406,9 @@ html, body {{
   }}
 
   function focusNodeNow(nodeId) {{
+    if (viewMode === "mandala") {{
+      return false;
+    }}
     const node = network.body.data.nodes.get(nodeId);
     if (!node || node.hidden) {{
       return false;
@@ -2872,6 +3708,13 @@ html, body {{
     if (!params.nodes || params.nodes.length === 0) {{
       return;
     }}
+    // Ctrl/Cmd-click marks a meta class as a mandala sector instead of folding it.
+    const srcEvent = params.event && params.event.srcEvent;
+    if (mandalaEnabled && srcEvent && (srcEvent.ctrlKey || srcEvent.metaKey)) {{
+      toggleSector(params.nodes[0]);
+      network.unselectAll();
+      return;
+    }}
     const handled = handleActivatedNode(params.nodes[0]);
     if (handled) {{
       network.unselectAll();
@@ -2914,6 +3757,8 @@ html, body {{
     maybeFocusPendingSearchNode();
   }});
 
+{mandala_script}
+
   applyViewMode("graph");
   applyTheme(themeMode, false);
   applyLabelMode(labelMode);
@@ -2921,13 +3766,23 @@ html, body {{
   refreshPropertyToggle();
   refreshSearchControls();
   refreshOntologyLegendControls();
+  if (mandalaEnabled) {{
+    renderSectorChips();
+    renderLayerOverrides();
+  }}
 }})();
 </script>
 """
 
+    # The vendored three.js bundle is inlined outside the controls f-string: its
+    # minified body contains tens of thousands of literal braces that would break
+    # f-string parsing. It must load before the mandala script that uses it.
+    vendor_scripts = _three_js_bundle() if mandala_enabled else ""
+    injected = f"{vendor_scripts}\n{controls}"
+
     if "</body>" in html:
-        html = html.replace("</body>", f"{controls}\n</body>")
+        html = html.replace("</body>", f"{injected}\n</body>")
     else:
-        html += controls
+        html += injected
 
     output_path.write_text(html, encoding="utf-8")

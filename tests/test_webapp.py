@@ -18,12 +18,16 @@ def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypat
         recorded_kwargs.update(kwargs)
         return SimpleNamespace(errors=[])
 
-    def fake_render_interactive_graph(_closure, output_path: Path, *, label_mode: str):
+    def fake_render_interactive_graph(
+        _closure, output_path: Path, *, label_mode: str, include_mandala: bool = True
+    ):
+        recorded_kwargs["include_mandala"] = include_mandala
         output_path.write_text("<html><body>graph</body></html>", encoding="utf-8")
         return {
             "ontologies": 1,
             "ontology_refs": 1,
             "classes": 2,
+            "individuals": 0,
             "relations": 1,
             "imports": 0,
             "unresolved_imports": 0,
@@ -62,6 +66,8 @@ def test_render_uses_redirect_and_current_render_state(tmp_path: Path, monkeypat
     assert 'id="ontoviewer-graph-frame"' in page
     assert 'ontoviewer-theme' in page
     assert recorded_kwargs["allow_insecure_ssl"] is True
+    # The form above omits the mandala checkbox, so it must render without it.
+    assert recorded_kwargs["include_mandala"] is False
 
 
 def test_missing_render_id_shows_error(tmp_path: Path) -> None:

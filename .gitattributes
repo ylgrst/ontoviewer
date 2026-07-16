@@ -1,0 +1,3 @@
+ontoviewer/vendor/** linguist-vendored
+ontoviewer/vendor/three/three.min.js -diff
+ontoviewer/vendor/three/OrbitControls.js -diff

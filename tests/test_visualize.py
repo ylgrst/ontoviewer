@@ -303,3 +303,89 @@ def test_tree_layout_keeps_siblings_on_one_line() -> None:
 
     sibling_levels = {tree_positions[node_id][1] for node_id in class_nodes}
     assert len(sibling_levels) == 1
+
+
+def _write_layered_ontology(tmp_path: Path) -> Path:
+    """A meta ontology imported by a domain ontology that instantiates individuals."""
+    meta_file = tmp_path / "meta.ttl"
+    domain_file = tmp_path / "domain.ttl"
+    meta_file.write_text(
+        """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix meta: <http://example.org/meta#> .
+
+<http://example.org/meta> a owl:Ontology .
+meta:Entity a owl:Class .
+meta:Object a owl:Class ; rdfs:subClassOf meta:Entity .
+meta:Process a owl:Class ; rdfs:subClassOf meta:Entity .
+""",
+        encoding="utf-8",
+    )
+    domain_file.write_text(
+        f"""
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix meta: <http://example.org/meta#> .
+@prefix d: <http://example.org/domain#> .
+
+<http://example.org/domain> a owl:Ontology ;
+    owl:imports <{meta_file.as_uri()}> .
+d:Bolt a owl:Class ; rdfs:subClassOf meta:Object .
+d:Welding a owl:Class ; rdfs:subClassOf meta:Process .
+d:bolt1 a owl:NamedIndividual, d:Bolt .
+d:weld1 a owl:NamedIndividual, d:Welding .
+""",
+        encoding="utf-8",
+    )
+    return domain_file
+
+
+def test_render_includes_mandala_view_with_individuals(tmp_path: Path) -> None:
+    domain_file = _write_layered_ontology(tmp_path)
+    output_file = tmp_path / "graph.html"
+
+    closure = load_ontology_closure(domain_file, max_depth=1, rdf_format="turtle")
+    stats = render_interactive_graph(closure, output_file, label_mode="human")
+    html = output_file.read_text(encoding="utf-8")
+
+    assert stats["individuals"] == 2
+
+    # View wiring.
+    assert "ontoviewerSetViewMode('mandala')" in html
+    assert 'id="ontoviewer-mandala"' in html
+    assert "function assignSectors(sectors)" in html
+
+    # The vendored three.js runtime is inlined (offline-safe), MIT header intact.
+    assert "THREE.OrbitControls = OrbitControls;" in html
+    assert "Copyright 2010-2021 Three.js Authors" in html
+
+    # Payload carries the imported meta class on the top layer, the individuals,
+    # and the cross-ontology subclass edge that hands the domain class its slice.
+    marker = "const mandalaData = "
+    blob = html[html.index(marker) + len(marker):]
+    mandala_data = json.loads(blob[: blob.index(";\n")])
+    classes = {c["id"]: c for c in mandala_data["classes"]}
+    assert classes["http://example.org/meta#Object"]["layer"] == "meta"
+    assert classes["http://example.org/domain#Bolt"]["layer"] == "onto"
+    assert classes["http://example.org/domain#Bolt"]["superClasses"] == [
+        "http://example.org/meta#Object"
+    ]
+    individual_ids = {i["id"] for i in mandala_data["individuals"]}
+    assert "http://example.org/domain#bolt1" in individual_ids
+
+
+def test_render_without_mandala_omits_three_js(tmp_path: Path) -> None:
+    domain_file = _write_layered_ontology(tmp_path)
+    output_file = tmp_path / "graph.html"
+
+    closure = load_ontology_closure(domain_file, max_depth=1, rdf_format="turtle")
+    render_interactive_graph(closure, output_file, label_mode="human", include_mandala=False)
+    html = output_file.read_text(encoding="utf-8")
+
+    assert "ontoviewerSetViewMode('mandala')" not in html
+    assert "THREE.OrbitControls" not in html
+    assert "Copyright 2010-2021 Three.js Authors" not in html
+    # The two established views are untouched.
+    assert "ontoviewerSetViewMode('tree')" in html
+    assert "ontoviewerSetViewMode('graph')" in html

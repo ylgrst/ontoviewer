@@ -26,6 +26,7 @@ class RenderResult:
     max_depth: int
     rdf_format: Optional[str]
     allow_insecure_ssl: bool
+    include_mandala: bool
     stats: Dict[str, int]
     warnings: list[str]
     created_at: float
@@ -45,6 +46,7 @@ def create_app(*, storage_dir: Path) -> Flask:
             "rdf_format": "",
             "label_mode": "human",
             "allow_insecure_ssl": False,
+            "include_mandala": True,
         }
 
     def _state_from_result(result: RenderResult) -> dict[str, str | bool]:
@@ -53,6 +55,7 @@ def create_app(*, storage_dir: Path) -> Flask:
             "rdf_format": result.rdf_format or "",
             "label_mode": result.label_mode,
             "allow_insecure_ssl": result.allow_insecure_ssl,
+            "include_mandala": result.include_mandala,
         }
 
     def _prune_old_renders() -> None:
@@ -107,6 +110,8 @@ def create_app(*, storage_dir: Path) -> Flask:
             "true",
             "yes",
         }
+        # An unchecked checkbox is simply absent from the form submission.
+        include_mandala = "include_mandala" in request.form
 
         try:
             max_depth = int(max_depth_raw)
@@ -116,6 +121,7 @@ def create_app(*, storage_dir: Path) -> Flask:
                 "rdf_format": rdf_format or "",
                 "label_mode": label_mode,
                 "allow_insecure_ssl": allow_insecure_ssl,
+                "include_mandala": include_mandala,
             }
             return _render_home(error="Max depth must be an integer >= 0.", state=state)
         if max_depth < 0:
@@ -124,6 +130,7 @@ def create_app(*, storage_dir: Path) -> Flask:
                 "rdf_format": rdf_format or "",
                 "label_mode": label_mode,
                 "allow_insecure_ssl": allow_insecure_ssl,
+                "include_mandala": include_mandala,
             }
             return _render_home(error="Max depth must be >= 0.", state=state)
 
@@ -143,7 +150,9 @@ def create_app(*, storage_dir: Path) -> Flask:
                 rdf_format=rdf_format,
                 allow_insecure_ssl=allow_insecure_ssl,
             )
-            stats = render_interactive_graph(closure, output_path, label_mode=label_mode)
+            stats = render_interactive_graph(
+                closure, output_path, label_mode=label_mode, include_mandala=include_mandala
+            )
         except Exception as exc:
             rmtree(run_dir, ignore_errors=True)
             state = {
@@ -151,6 +160,7 @@ def create_app(*, storage_dir: Path) -> Flask:
                 "rdf_format": rdf_format or "",
                 "label_mode": label_mode,
                 "allow_insecure_ssl": allow_insecure_ssl,
+                "include_mandala": include_mandala,
             }
             return _render_home(error=f"Could not render ontology: {exc}", state=state)
 
@@ -163,6 +173,7 @@ def create_app(*, storage_dir: Path) -> Flask:
             max_depth=max_depth,
             rdf_format=rdf_format,
             allow_insecure_ssl=allow_insecure_ssl,
+            include_mandala=include_mandala,
             stats=stats,
             warnings=closure.errors,
             created_at=time(),
@@ -419,6 +430,20 @@ HOME_TEMPLATE = """
           </label>
         </div>
         <div>
+          <label for="include_mandala">3D mandala view</label>
+          <label style="display:flex; gap:8px; align-items:center; margin:0; color:var(--text);">
+            <input
+              id="include_mandala"
+              type="checkbox"
+              name="include_mandala"
+              value="1"
+              style="width:auto; margin:0;"
+              {% if state.include_mandala %}checked{% endif %}
+            />
+            Include the layered mandala view (adds the ~640 KB three.js runtime to the HTML)
+          </label>
+        </div>
+        <div>
           <button type="submit">Render Graph</button>
         </div>
       </form>
@@ -451,6 +476,7 @@ HOME_TEMPLATE = """
           <div class="stat"><span>Ontologies</span><b>{{ result.stats.ontologies }}</b></div>
           <div class="stat"><span>Ontology refs</span><b>{{ result.stats.ontology_refs }}</b></div>
           <div class="stat"><span>Classes</span><b>{{ result.stats.classes }}</b></div>
+          <div class="stat"><span>Individuals</span><b>{{ result.stats.get('individuals', 0) }}</b></div>
           <div class="stat"><span>Relations</span><b>{{ result.stats.relations }}</b></div>
           <div class="stat"><span>Imports</span><b>{{ result.stats.imports }}</b></div>
           <div class="stat"><span>Unresolved imports</span><b>{{ result.stats.unresolved_imports }}</b></div>

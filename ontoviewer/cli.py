@@ -56,6 +56,14 @@ def render(
             "Use only for trusted ontology hosts."
         ),
     ),
+    mandala: bool = typer.Option(
+        True,
+        "--mandala/--no-mandala",
+        help=(
+            "Include the 3D layered mandala view. Adds the vendored three.js runtime "
+            "(~640 KB) to the output; use --no-mandala for a smaller file."
+        ),
+    ),
     check_updates: bool = typer.Option(
         True,
         "--check-updates/--no-check-updates",
@@ -71,7 +79,9 @@ def render(
         rdf_format=rdf_format,
         allow_insecure_ssl=allow_insecure_ssl,
     )
-    stats = render_interactive_graph(closure, output, label_mode=label_mode)
+    stats = render_interactive_graph(
+        closure, output, label_mode=label_mode, include_mandala=mandala
+    )
 
     typer.echo(f"Graph written to: {output.resolve()}")
     typer.echo(
@@ -79,6 +89,7 @@ def render(
         f"{stats['ontologies']} ontologies, "
         f"{stats['ontology_refs']} ontology references, "
         f"{stats['classes']} classes, "
+        f"{stats['individuals']} individuals, "
         f"{stats['relations']} relations, "
         f"{stats['imports']} imports, "
         f"{stats['unresolved_imports']} unresolved imports."

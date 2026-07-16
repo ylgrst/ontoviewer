@@ -8,7 +8,8 @@ Current MVP includes:
 - Extract classes and class-to-class relations.
 - Optionally attach classes to ontology anchor nodes.
 - Render an interactive HTML graph with zoom/pan controls.
-- Switch live between force-directed graph view and family-tree view.
+- Switch live between force-directed graph view, family-tree view, and a 3D layered mandala view.
+- Stack meta-ontology classes, ontology classes, and instantiated individuals on three discs, sliced into user-chosen sectors.
 - Color nodes by originating ontology.
 - Collapse/expand ontology groups interactively.
 - Show ontology import links as dashed edges labeled `imports`.
@@ -258,7 +259,8 @@ ontoviewer serve --host 127.0.0.1 --port 8000 --no-check-updates
 In the graph UI:
 - Use mouse wheel / trackpad to zoom.
 - Drag background to pan.
-- Use **Graph view / Family tree view** to switch layouts in the same rendered page.
+- Use **Graph view / Family tree view / Mandala view** to switch layouts in the same rendered page.
+- In Graph or Family tree view, Ctrl/⌘-click a meta-ontology class to add or drop it as a mandala sector.
 - Use **Show relation edges / Hide relation edges** in either view. Graph view shows them by default; family-tree view starts with them hidden for readability.
 - Use **Dark mode / Light mode** to switch the full rendered page theme, including the sidebar and background.
 - Use the search bar to find node labels, then jump between matches with the left/right arrows.
@@ -269,11 +271,20 @@ In the graph UI:
 - Click an ontology entry in the legend to collapse or expand just that ontology in both graph view and family-tree view.
 - Use the built-in legend to understand node and edge types.
 
+In the Mandala view:
+- Height encodes the layer: imported meta-ontology classes on top, the ontology's own classes in the middle, instantiated individuals at the bottom.
+- Each pizza slice is a meta class you selected as a sector; a class sits in the slice of the nearest sector it descends from.
+- Distance from the central axis is taxonomic depth below the sector's meta class, normalized per slice so the most specialised classes reach the rim.
+- The central axis holds what every slice shares: the most general classes and anything not under a selected sector.
+- An individual inherits the angle and radius of its type, so `rdf:type` reads as a near-vertical drop to the bottom disc.
+- Drag to orbit, scroll to zoom, and click a node for its details. Move an ontology between the meta and ontology discs (or hide it) from the Layers panel.
+
 Web UI features:
 - Upload a local ontology file.
 - Configure import recursion depth.
 - Set optional RDF format.
 - Choose default label mode (`human` or `raw`).
+- Toggle the 3D mandala view on or off (leave it off for a smaller HTML file).
 - Optionally enable an insecure SSL fallback for trusted remote import hosts with expired or broken certificates.
 - Share the same dark/light theme between the web UI page and the embedded graph preview.
 - Reload-safe result pages with a visible current-render status.
@@ -293,6 +304,7 @@ Options:
 - `--output`, `-o`: output HTML file path.
 - `--format`: force parser format (example: `xml`, `turtle`, `n3`, `nt`).
 - `--label-mode`: initial display mode for class/property labels (`human` or `raw`).
+- `--mandala/--no-mandala`: include the 3D mandala view (on by default). It inlines the vendored three.js runtime (~640 KB); use `--no-mandala` for a smaller file.
 - `--allow-insecure-ssl`: retry remote imports without certificate verification when a remote host presents a broken or expired certificate.
 - `--check-updates/--no-check-updates`: enable or disable the lightweight GitHub release check for that command.
 
@@ -321,8 +333,10 @@ ontoviewer/
   loader.py      # ontology loading + recursive import resolution
   labels.py      # human-readable annotation label resolution
   visualize.py   # class/relation extraction + interactive graph rendering
+  mandala.py     # individual extraction + mandala payload/geometry reference
   webapp.py      # Flask local web UI
   model.py       # shared dataclasses
+  vendor/three/  # vendored three.js r134 runtime, inlined for the mandala view
 tests/
   test_loader.py # recursive import traversal tests
 ```
@@ -339,6 +353,9 @@ pytest
 - Remote import retrieval failures are reported as warnings; graph generation still completes with available ontologies.
 - Some ontology hosts publish expired TLS certificates. OntoViewer keeps strict verification by default, but the CLI flag `--allow-insecure-ssl` and the matching Web UI checkbox let you opt into a fallback retry for trusted hosts only.
 - Class/property node labels use annotation metadata (`rdfs:label`, `skos:prefLabel`, `IAO_0000111`, etc.) when present, then fall back to IRI-derived codes.
+- The mandala view inlines the vendored three.js runtime, adding ~640 KB to each generated HTML file; disable it with `--no-mandala` (CLI) or the Web UI checkbox when size matters.
+- The mandala's sector and radius geometry runs in the browser; `ontoviewer/mandala.py` holds a unit-tested Python reference of the same algorithm, and the two are kept in step.
+- Mandala search covers classes only, not individuals. A class descending from two unrelated sectors is placed in its nearest slice, with the others listed in its info panel.
 - This baseline focuses on class-level graph exploration. More advanced filtering/layout controls will be added in next commits.
 
 ## License

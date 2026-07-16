@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ontoviewer"
-version = "0.9.1"
+version = "0.10.0"
 description = "Interactive ontology class and relation visualization from OWL/RDF files."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,9 @@ ontoviewer = "ontoviewer.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["ontoviewer*"]
+
+[tool.setuptools.package-data]
+ontoviewer = ["vendor/three/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
